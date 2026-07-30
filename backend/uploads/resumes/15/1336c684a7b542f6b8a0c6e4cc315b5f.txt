@@ -1,0 +1,5 @@
+Johnathan Doe
+Senior Cloud Architect
+Phone: 1234567890
+Bio: AI Specialist
+Skills: Python, Go, Docker
