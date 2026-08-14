@@ -7,9 +7,11 @@ from ..database import get_db
 from ..models.user import User
 from ..models.resume import Resume
 from ..utils.jwt_utils import get_current_user
-from ..services import resume_service
+from ..services import resume_service, ai_service
+from ..schemas.ai import CompareJdRequest
 
 router = APIRouter()
+
 
 ALLOWED_EXTENSIONS = {".pdf", ".docx", ".doc", ".txt"}
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
@@ -262,3 +264,50 @@ def delete_resume(
         resume_service.delete_resume_file(resume.file_path)
     db.delete(resume)
     db.commit()
+
+
+@router.post("/compare-jd")
+async def compare_resume_with_jd(
+    body: CompareJdRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Module 1 & 2: Compare Resume vs Job Description."""
+    resume = db.query(Resume).filter(
+        Resume.id == body.resume_id, Resume.user_id == current_user.id
+    ).first()
+    if not resume:
+        raise HTTPException(status_code=404, detail="Resume not found")
+
+    skills = json.loads(resume.parsed_skills or "[]")
+    result = await ai_service.compare_resume_with_jd(
+        resume_text=resume.text_extract or "",
+        parsed_skills=skills,
+        job_description=body.job_description,
+        job_title=body.job_title or "",
+    )
+    return result
+
+
+@router.get("/{resume_id}/improvements")
+async def get_resume_improvements(
+    resume_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Module 6: Resume Improvement Suggestions AI."""
+    resume = db.query(Resume).filter(
+        Resume.id == resume_id, Resume.user_id == current_user.id
+    ).first()
+    if not resume:
+        raise HTTPException(status_code=404, detail="Resume not found")
+
+    raw = json.loads(resume.parsed_raw_json or "{}")
+    target_role = raw.get("target_title") or raw.get("current_title") or ""
+
+    improvements = await ai_service.generate_resume_improvements(
+        resume_text=resume.text_extract or "",
+        target_role=target_role,
+    )
+    return improvements
+

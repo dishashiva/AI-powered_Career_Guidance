@@ -5,10 +5,55 @@ from ..database import get_db
 from ..models.user import User
 from ..models.resume import Resume
 from ..utils.jwt_utils import get_current_user
-from ..schemas.ai import ChatMessage, ChatResponse, SalaryRequest
+from ..schemas.ai import ChatMessage, ChatResponse, SalaryRequest, InterviewPrepRequest
 from ..services import ai_service
 
 router = APIRouter()
+
+
+@router.post("/interview-prep")
+async def generate_interview_prep(
+    body: InterviewPrepRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Generate categorized AI interview preparation questions (technical, behavioral, general)."""
+    skills = []
+    roles = []
+    text_extract = ""
+    target_role = body.job_role or ""
+
+    resume_id = body.resume_id
+    if not resume_id:
+        latest = (
+            db.query(Resume)
+            .filter(Resume.user_id == current_user.id, Resume.parsed_at.isnot(None))
+            .order_by(Resume.parsed_at.desc())
+            .first()
+        )
+        if latest:
+            resume_id = latest.id
+
+    if resume_id:
+        resume = db.query(Resume).filter(
+            Resume.id == resume_id,
+            Resume.user_id == current_user.id,
+        ).first()
+        if resume:
+            skills = json.loads(resume.parsed_skills or "[]")
+            roles = json.loads(resume.parsed_roles or "[]")
+            text_extract = resume.text_extract or ""
+            raw = json.loads(resume.parsed_raw_json or "{}")
+            if not target_role:
+                target_role = raw.get("target_title") or raw.get("current_title") or (roles[0] if roles else "")
+
+    return await ai_service.generate_interview_questions(
+        skills=skills,
+        roles=roles,
+        resume_text=text_extract,
+        target_role=target_role,
+        job_description=body.job_description or "",
+    )
 
 
 @router.post("/chat", response_model=ChatResponse)
