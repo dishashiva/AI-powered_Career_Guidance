@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { resumesAPI } from '../api/client';
 import ChatInterface from '../components/ChatInterface';
+import { getActiveResumeId, setActiveResumeId } from '../utils/activeResume';
 import { Bot, FileText, HelpCircle } from 'lucide-react';
 
 export default function ChatPage() {
@@ -10,7 +11,8 @@ export default function ChatPage() {
   useEffect(() => {
     resumesAPI.list().then((r) => {
       setResumes(r.data);
-      if (r.data.length > 0) setSelectedResume(r.data[0].id);
+      const activeId = getActiveResumeId(r.data);
+      if (activeId) setSelectedResume(activeId);
     }).catch(() => {});
   }, []);
 
@@ -40,7 +42,10 @@ export default function ChatPage() {
               {resumes.map((r) => (
                 <button
                   key={r.id}
-                  onClick={() => setSelectedResume(r.id)}
+                  onClick={() => {
+                    setSelectedResume(r.id);
+                    setActiveResumeId(r.id);
+                  }}
                   style={{
                     width: '100%', textAlign: 'left', padding: '8px 10px', borderRadius: 'var(--radius-md)',
                     background: selectedResume === r.id ? 'var(--accent-subtle)' : 'transparent',

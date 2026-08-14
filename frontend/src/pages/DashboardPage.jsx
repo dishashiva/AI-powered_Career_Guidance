@@ -3,9 +3,9 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import ResumeUpload from '../components/ResumeUpload';
 import { resumesAPI } from '../api/client';
+import { setActiveResumeId } from '../utils/activeResume';
 import {
-  FileText, Brain, Briefcase, BookOpen, Clock, Upload,
-  ChevronRight, Download, Trash2, Eye, X, Loader2, ExternalLink,
+  FileText, Clock, Upload, ChevronRight, Download, Trash2, Eye, X, Loader2, ExternalLink,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -221,6 +221,7 @@ function ResumeRow({ resume, onView, onDownload, onDelete, downloading }) {
         {/* View analysis */}
         <Link
           to={`/career?resume=${resume.id}`}
+          onClick={() => setActiveResumeId(resume.id)}
           title="View career analysis"
           style={{
             display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -355,8 +356,6 @@ export default function DashboardPage() {
     }
   };
 
-  const latestResume = resumes[0];
-
   return (
     <div className="page-wrapper">
       {/* Delete modal */}
@@ -386,76 +385,13 @@ export default function DashboardPage() {
           <p style={{ fontSize: 14 }}>Upload a resume to get AI-powered career insights</p>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 16, marginBottom: 24 }}>
-          {/* Upload */}
-          <div className="card animate-fade-in" style={{ animationDelay: '50ms' }}>
-            <div className="flex items-center gap-2" style={{ marginBottom: 16 }}>
-              <Upload size={16} color="var(--text-secondary)" />
-              <h2 style={{ fontSize: 15, fontWeight: 600 }}>Upload resume</h2>
-            </div>
-            <ResumeUpload onUploadSuccess={handleUploadSuccess} />
+        {/* Upload Resume Card */}
+        <div className="card animate-fade-in" style={{ animationDelay: '50ms', marginBottom: 24 }}>
+          <div className="flex items-center gap-2" style={{ marginBottom: 16 }}>
+            <Upload size={16} color="var(--text-secondary)" />
+            <h2 style={{ fontSize: 15, fontWeight: 600 }}>Upload resume</h2>
           </div>
-
-          {/* Quick Stats */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <div className="stat-card animate-fade-in" style={{ animationDelay: '100ms' }}>
-              <p style={{ fontSize: 12, fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-muted)', marginBottom: 8 }}>
-                Latest ATS Score
-              </p>
-              {latestResume ? (
-                <div>
-                  <div className="flex items-center gap-2">
-                    <div className="stat-value">{latestResume.ats_score?.toFixed(0) ?? 0}</div>
-                    <span style={{ color: 'var(--text-muted)', fontSize: 14 }}>/100</span>
-                  </div>
-                  <div className="progress-bar" style={{ marginTop: 10 }}>
-                    <div className="progress-fill" style={{ width: `${latestResume.ats_score || 0}%` }} />
-                  </div>
-                  <p style={{ fontSize: 12, marginTop: 6, color: 'var(--text-muted)' }}>{latestResume.filename}</p>
-                </div>
-              ) : (
-                <p style={{ fontSize: 14, color: 'var(--text-muted)' }}>Upload a resume to see your score</p>
-              )}
-            </div>
-
-            {/* All Detected Skills card */}
-            {latestResume && latestResume.parsed_skills?.length > 0 && (
-              <div className="card animate-fade-in" style={{ animationDelay: '120ms', padding: 16 }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-                  <div className="flex items-center gap-2">
-                    <Brain size={16} color="var(--violet-light)" />
-                    <h3 style={{ fontSize: 13, fontWeight: 600, margin: 0 }}>
-                      All Detected Skills ({latestResume.parsed_skills.length})
-                    </h3>
-                  </div>
-                </div>
-                <div className="flex" style={{ flexWrap: 'wrap', gap: 6, maxHeight: 160, overflowY: 'auto', paddingRight: 4 }}>
-                  {latestResume.parsed_skills.map((s, idx) => (
-                    <span key={idx} className="badge badge-violet" style={{ fontSize: 11 }}>{s}</span>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-              {[
-                { to: '/career', icon: Brain, label: 'Career intel' },
-                { to: '/jobs', icon: Briefcase, label: 'Jobs' },
-                { to: '/courses', icon: BookOpen, label: 'Courses' },
-                { to: '/chat', icon: Brain, label: 'AI Coach' },
-              ].map(({ to, icon: Icon, label }) => (
-                <Link key={to} to={to} className="card" style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 10, textDecoration: 'none' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <div style={{ width: 32, height: 32, borderRadius: 'var(--radius-md)', background: 'var(--gray-100)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      <Icon size={15} color="var(--text-secondary)" />
-                    </div>
-                    <ChevronRight size={14} color="var(--text-muted)" />
-                  </div>
-                  <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary)' }}>{label}</span>
-                </Link>
-              ))}
-            </div>
-          </div>
+          <ResumeUpload onUploadSuccess={handleUploadSuccess} />
         </div>
 
         {/* Resume History */}

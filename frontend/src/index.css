@@ -232,6 +232,9 @@ strong { color: var(--text-primary); font-weight: 600; }
 .badge-amber   { background: var(--amber-50);   color: var(--amber-600); }
 .badge-red     { background: var(--red-50);     color: var(--red-600); }
 .badge-gray    { background: var(--gray-100);   color: var(--gray-600); }
+.badge-violet  { background: #f3e8ff;           color: #7e22ce; }
+.badge-orange  { background: #fff7ed;           color: #c2410c; }
+.badge-cyan    { background: #ecfeff;           color: #0e7490; }
 
 /* ─── Stat ────────────────────────────────────────────────── */
 .stat-card {
@@ -360,3 +363,51 @@ strong { color: var(--text-primary); font-weight: 600; }
     padding: 16px;
   }
 }
+
+/* ─── Resume Builder Utilities ────────────────────────────── */
+.field-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 4px;
+}
+
+.btn-icon-danger {
+  background: none;
+  border: none;
+  color: var(--gray-400);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition);
+}
+
+.btn-icon-danger:hover {
+  color: var(--red-600);
+  background: var(--red-50);
+}
+
+.btn-icon-secondary {
+  background: none;
+  border: none;
+  color: var(--gray-500);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition);
+}
+
+.btn-icon-secondary:hover {
+  color: var(--text-primary);
+  background: var(--gray-100);
+}
+

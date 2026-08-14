@@ -68,16 +68,22 @@ export const resumesAPI = {
   download: (id) => client.get(`/resumes/${id}/download`, { responseType: 'blob' }),
   view: (id) => client.get(`/resumes/${id}/view`, { responseType: 'blob' }),
   autofillProfile: (id, overwrite = true) => client.post(`/resumes/${id}/autofill-profile?overwrite=${overwrite}`),
+  compareJd: (data) => client.post('/resumes/compare-jd', data),
+  getImprovements: (id) => client.get(`/resumes/${id}/improvements`),
 };
 
 // ─── Jobs ────────────────────────────────────────────────────────
 export const jobsAPI = {
-  getRecommendations: () => client.get('/jobs/recommendations'),
+  getRecommendations: (resumeId = null) =>
+    client.get(`/jobs/recommendations${resumeId ? `?resume_id=${resumeId}` : ''}`),
 };
 
 // ─── Courses ─────────────────────────────────────────────────────
 export const coursesAPI = {
-  getRecommendations: () => client.get('/courses/recommendations'),
+  getRecommendations: (resumeId = null) =>
+    client.get(`/courses/recommendations${resumeId ? `?resume_id=${resumeId}` : ''}`),
+  getLearningPath: (resumeId = null) =>
+    client.get(`/courses/learning-path${resumeId ? `?resume_id=${resumeId}` : ''}`),
 };
 
 // ─── AI ──────────────────────────────────────────────────────────
@@ -86,6 +92,8 @@ export const aiAPI = {
     client.post('/ai/chat', { message, resume_id }),
   salary: (data) => client.post('/ai/salary', data),
   analyze: (resume_id) => client.get(`/ai/analyze/${resume_id}`),
+  interviewPrep: (data) => client.post('/ai/interview-prep', data),
 };
+
 
 export default client;

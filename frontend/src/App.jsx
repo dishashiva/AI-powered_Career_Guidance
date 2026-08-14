@@ -11,6 +11,8 @@ import JobsPage from './pages/JobsPage';
 import CoursesPage from './pages/CoursesPage';
 import ChatPage from './pages/ChatPage';
 import ProfilePage from './pages/ProfilePage';
+import InterviewPage from './pages/InterviewPage';
+import ResumeBuilderPage from './pages/ResumeBuilderPage';
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -40,6 +42,8 @@ function AppRoutes() {
         <Route path="/career" element={<ProtectedRoute><CareerDashboardPage /></ProtectedRoute>} />
         <Route path="/jobs" element={<ProtectedRoute><JobsPage /></ProtectedRoute>} />
         <Route path="/courses" element={<ProtectedRoute><CoursesPage /></ProtectedRoute>} />
+        <Route path="/resume-builder" element={<ProtectedRoute><ResumeBuilderPage /></ProtectedRoute>} />
+        <Route path="/interview" element={<ProtectedRoute><InterviewPage /></ProtectedRoute>} />
         <Route path="/chat" element={<ProtectedRoute><ChatPage /></ProtectedRoute>} />
         <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
         <Route path="*" element={<Navigate to="/" replace />} />

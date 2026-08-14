@@ -1,6 +1,6 @@
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { LayoutDashboard, Brain, Briefcase, BookOpen, MessageSquare, LogOut, Menu, X, User } from 'lucide-react';
+import { LayoutDashboard, Brain, Briefcase, BookOpen, MessageSquare, LogOut, Menu, X, User, FileText } from 'lucide-react';
 import { useState } from 'react';
 
 const navLinks = [
@@ -8,6 +8,7 @@ const navLinks = [
   { to: '/career', label: 'Career', icon: Brain },
   { to: '/jobs', label: 'Jobs', icon: Briefcase },
   { to: '/courses', label: 'Courses', icon: BookOpen },
+  { to: '/resume-builder', label: 'Resume Builder', icon: FileText },
   { to: '/chat', label: 'Coach', icon: MessageSquare },
 ];
 
