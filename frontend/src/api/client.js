@@ -16,11 +16,11 @@ client.interceptors.request.use((config) => {
   return config;
 });
 
-// Handle 401 — clear token and redirect
+// Handle 401 — clear token and redirect for protected routes only
 client.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
+    if (error.response?.status === 401 && !error.config?.url?.includes('/auth/')) {
       localStorage.removeItem('access_token');
       window.location.href = '/login';
     }
@@ -39,6 +39,8 @@ export const authAPI = {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     });
   },
+  forgotPassword: (email) => client.post('/auth/forgot-password', { email }),
+  resetPassword: (token, new_password) => client.post('/auth/reset-password', { token, new_password }),
 };
 
 // ─── Users ───────────────────────────────────────────────────────
@@ -95,5 +97,65 @@ export const aiAPI = {
   interviewPrep: (data) => client.post('/ai/interview-prep', data),
 };
 
+// ─── Feedback ───────────────────────────────────────────────────
+export const feedbackAPI = {
+  submit: (data) => client.post('/feedback', data),
+  getMy: () => client.get('/feedback/my'),
+};
+
+// ─── Announcements ──────────────────────────────────────────────
+export const announcementsAPI = {
+  getActive: () => client.get('/announcements/active'),
+};
+
+// ─── Admin API ──────────────────────────────────────────────────
+export const adminAPI = {
+  getStats: () => client.get('/admin/stats'),
+  listUsers: (params) => client.get('/admin/users', { params }),
+  updateUserStatus: (id, is_active) => client.patch(`/admin/users/${id}/status`, { is_active }),
+  updateUserRole: (id, is_admin) => client.patch(`/admin/users/${id}/role`, { is_admin }),
+  deleteUser: (id) => client.delete(`/admin/users/${id}`),
+  resetUserPassword: (id) => client.post(`/admin/users/${id}/reset-password`),
+  getUserProfile: (id) => client.get(`/admin/users/${id}/profile`),
+  updateUserProfile: (id, data) => client.put(`/admin/users/${id}/profile`, data),
+
+  listResumes: () => client.get('/admin/resumes'),
+  getResumeFile: (id) => client.get(`/admin/resumes/${id}/file`, { responseType: 'blob' }),
+  getParseStats: () => client.get('/admin/resumes/parse-stats'),
+
+  listJobs: () => client.get('/admin/jobs'),
+  scrapeJobs: (params) => client.post('/admin/jobs/scrape', null, { params }),
+  updateJob: (id, data) => client.put(`/admin/jobs/${id}`, data),
+  deleteJob: (id) => client.delete(`/admin/jobs/${id}`),
+
+  listCourses: () => client.get('/admin/courses'),
+  scrapeCourses: (params) => client.post('/admin/courses/scrape', null, { params }),
+  updateCourse: (id, data) => client.put(`/admin/courses/${id}`, data),
+  deleteCourse: (id) => client.delete(`/admin/courses/${id}`),
+
+  getAtsAnalytics: () => client.get('/admin/analytics/ats'),
+  getSkillAnalytics: () => client.get('/admin/analytics/skills'),
+  getCareerAnalytics: () => client.get('/admin/analytics/careers'),
+
+  listFeedback: (params) => client.get('/admin/feedback', { params }),
+  updateFeedback: (id, data) => client.patch(`/admin/feedback/${id}`, data),
+  deleteFeedback: (id) => client.delete(`/admin/feedback/${id}`),
+
+  getActivityLogs: (params) => client.get('/admin/activity-logs', { params }),
+  getSystemHealth: () => client.get('/admin/system-health'),
+  getAiUsage: () => client.get('/admin/ai-usage'),
+  testAiPing: () => client.post('/admin/ai-usage/test-ping'),
+  globalSearch: (q) => client.get('/admin/search', { params: { q } }),
+  exportReport: (reportType, format = 'csv') =>
+    client.get(`/admin/reports/export/${reportType}`, {
+      params: { format },
+      responseType: format === 'json' ? 'json' : 'blob',
+    }),
+
+  listAnnouncements: () => client.get('/admin/announcements'),
+  createAnnouncement: (data) => client.post('/admin/announcements', data),
+  updateAnnouncement: (id, data) => client.put(`/admin/announcements/${id}`, data),
+  deleteAnnouncement: (id) => client.delete(`/admin/announcements/${id}`),
+};
 
 export default client;

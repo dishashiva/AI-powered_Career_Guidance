@@ -19,6 +19,15 @@ class Token(BaseModel):
     token_type: str = "bearer"
 
 
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
+
 class TokenData(BaseModel):
     user_id: Optional[int] = None
 
@@ -28,6 +37,8 @@ class UserOut(BaseModel):
     email: str
     full_name: str
     is_active: bool
+    is_admin: bool = False
+    last_login_at: Optional[datetime] = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
