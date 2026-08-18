@@ -6,7 +6,33 @@ import httpx
 from typing import Any, Dict, Optional
 from ..config import get_settings
 
+import time
+from ..database import SessionLocal
+from ..models.ai_usage import AiApiUsage
+
 settings = get_settings()
+
+
+def _log_usage_to_db(provider: str, model: str, feature: str, prompt_tokens: int, completion_tokens: int, total_tokens: int, latency_ms: float, status_code: int, is_success: bool, error_message: Optional[str] = None):
+    try:
+        db = SessionLocal()
+        record = AiApiUsage(
+            provider=provider,
+            model=model,
+            feature=feature,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+            latency_ms=latency_ms,
+            status_code=status_code,
+            is_success=is_success,
+            error_message=error_message,
+        )
+        db.add(record)
+        db.commit()
+        db.close()
+    except Exception as ex:
+        print(f"[AI Usage Log Error]: {ex}", flush=True)
 
 
 def _get_headers() -> Dict[str, str]:
@@ -17,18 +43,76 @@ def _get_headers() -> Dict[str, str]:
     return headers
 
 
-def _sync_chat_completion(url: str, headers: Dict[str, str], payload: Dict[str, Any]) -> str:
-    with httpx.Client(timeout=120.0, trust_env=False) as client:
-        response = client.post(url, headers=headers, json=payload)
-        if response.status_code != 200:
-            print(f"[DEBUG Groq Error {response.status_code}]: {response.text}", flush=True)
-            logging.error(f"[DEBUG Groq Error {response.status_code}]: {response.text}")
-        response.raise_for_status()
-        data = response.json()
-        return data["choices"][0]["message"]["content"]
+def _sync_chat_completion(url: str, headers: Dict[str, str], payload: Dict[str, Any], feature: str = "General AI") -> str:
+    start_time = time.time()
+    model = payload.get("model", "llama-3.3-70b-versatile")
+    provider = "groq"
+    try:
+        with httpx.Client(timeout=120.0, trust_env=False) as client:
+            response = client.post(url, headers=headers, json=payload)
+            latency_ms = round((time.time() - start_time) * 1000, 2)
+            if response.status_code != 200:
+                print(f"[DEBUG Groq Error {response.status_code}]: {response.text}", flush=True)
+                logging.error(f"[DEBUG Groq Error {response.status_code}]: {response.text}")
+                _log_usage_to_db(
+                    provider=provider,
+                    model=model,
+                    feature=feature,
+                    prompt_tokens=0,
+                    completion_tokens=0,
+                    total_tokens=0,
+                    latency_ms=latency_ms,
+                    status_code=response.status_code,
+                    is_success=False,
+                    error_message=response.text[:500]
+                )
+            response.raise_for_status()
+            data = response.json()
+
+            usage = data.get("usage", {})
+            p_tokens = usage.get("prompt_tokens", 0)
+            c_tokens = usage.get("completion_tokens", 0)
+            t_tokens = usage.get("total_tokens", p_tokens + c_tokens)
+
+            content = data["choices"][0]["message"]["content"]
+
+            if t_tokens == 0:
+                msg_str = str(payload.get("messages", ""))
+                p_tokens = max(10, len(msg_str) // 4)
+                c_tokens = max(10, len(content) // 4)
+                t_tokens = p_tokens + c_tokens
+
+            _log_usage_to_db(
+                provider=provider,
+                model=model,
+                feature=feature,
+                prompt_tokens=p_tokens,
+                completion_tokens=c_tokens,
+                total_tokens=t_tokens,
+                latency_ms=latency_ms,
+                status_code=200,
+                is_success=True,
+            )
+
+            return content
+    except Exception as e:
+        latency_ms = round((time.time() - start_time) * 1000, 2)
+        _log_usage_to_db(
+            provider=provider,
+            model=model,
+            feature=feature,
+            prompt_tokens=0,
+            completion_tokens=0,
+            total_tokens=0,
+            latency_ms=latency_ms,
+            status_code=500,
+            is_success=False,
+            error_message=str(e)[:500]
+        )
+        raise
 
 
-async def _chat_completion(messages: list, json_mode: bool = False) -> str:
+async def _chat_completion(messages: list, json_mode: bool = False, feature: str = "General AI") -> str:
     """Send a chat completion request to Groq API and return the raw response text."""
     api_key = (settings.GROQ_API_KEY or "").strip().strip('"').strip("'")
     if not api_key:
@@ -42,14 +126,13 @@ async def _chat_completion(messages: list, json_mode: bool = False) -> str:
         "model": model,
         "messages": messages,
     }
-    # Groq API supports json_object natively for structured outputs
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
 
     url = f"{base_url}/chat/completions"
 
     try:
-        return await asyncio.to_thread(_sync_chat_completion, url, headers, payload)
+        return await asyncio.to_thread(_sync_chat_completion, url, headers, payload, feature)
     except httpx.HTTPStatusError as e:
         error_body = e.response.text if e.response is not None else str(e)
         print(f"[DEBUG Groq HTTPError] Status: {e.response.status_code if e.response else 'None'}", flush=True)
@@ -93,6 +176,107 @@ def _extract_json(raw: str) -> Any:
         raise ValueError(f"Could not extract JSON from response: {raw[:100]}...")
 
 
+KNOWN_SKILLS_LIST = [
+    # Programming Languages
+    "Python", "Java", "C++", "C#", "C", "JavaScript", "TypeScript", "Go", "Golang", "Rust",
+    "PHP", "Ruby", "Swift", "Kotlin", "Scala", "R", "MATLAB", "Perl", "Bash", "Shell", "SQL", "PL/SQL", "HTML", "HTML5", "CSS", "CSS3", "Sass", "LESS",
+    # Frameworks & Libraries
+    "React", "React.js", "React Native", "Angular", "Vue", "Vue.js", "Next.js", "Nuxt.js", "Svelte", "Node.js", "Express", "Express.js",
+    "Django", "Flask", "FastAPI", "Spring Boot", "Spring Framework", "ASP.NET", ".NET", "Laravel", "Ruby on Rails", "Bootstrap", "Tailwind", "Tailwind CSS",
+    # Databases & Caching
+    "MySQL", "PostgreSQL", "MongoDB", "SQLite", "Redis", "Elasticsearch", "Cassandra", "DynamoDB", "MariaDB", "Oracle", "Microsoft SQL Server", "MS SQL", "Neo4j", "Firebase", "Supabase",
+    # Cloud & DevOps
+    "AWS", "Amazon Web Services", "Azure", "Microsoft Azure", "Google Cloud", "GCP", "Docker", "Kubernetes", "K8s", "Jenkins", "GitLab CI", "GitHub Actions", "Terraform", "Ansible", "Nginx", "Apache", "Linux", "Unix", "Cloudflare", "Serverless",
+    # Machine Learning & AI & Data Science
+    "Machine Learning", "Deep Learning", "Artificial Intelligence", "AI", "NLP", "Natural Language Processing", "Computer Vision", "PyTorch", "TensorFlow", "Keras", "Scikit-Learn", "OpenCV", "Pandas", "NumPy", "SciPy", "Matplotlib", "Seaborn", "Hugging Face", "LLM", "Generative AI", "LangChain", "LlamaIndex", "Spacy", "NLTK", "Data Analysis", "Data Mining", "PowerBI", "Tableau", "Apache Spark", "Hadoop", "Data Engineering",
+    # Tools, Methodologies & Soft Skills
+    "REST API", "RESTful APIs", "GraphQL", "gRPC", "Microservices", "System Design", "Object-Oriented Programming", "OOP", "Data Structures", "Algorithms", "Agile", "Scrum", "Kanban", "JIRA", "Confluence", "Git", "GitHub", "GitLab", "Bitbucket", "CI/CD", "Unit Testing", "Jest", "PyTest", "Selenium", "Cypress", "Postman", "Swagger", "Figma", "UI/UX", "Project Management", "Product Management", "Leadership", "Communication", "Problem Solving", "Teamwork"
+]
+
+
+def _python_rule_based_resume_parser(resume_text: str) -> Dict[str, Any]:
+    """
+    Exhaustive NLP & Regex fallback parser that extracts actual candidate profile data directly from resume text.
+    Used when AI API is unavailable or rate-limited.
+    """
+    text = resume_text or ""
+    text_lower = text.lower()
+
+    # 1. Extract ALL matching skills from database
+    detected_skills = []
+    seen_skills = set()
+    for skill in KNOWN_SKILLS_LIST:
+        pattern = r'(?<![a-zA-Z0-9#+])' + re.escape(skill.lower()) + r'(?![a-zA-Z0-9#+])'
+        if re.search(pattern, text_lower):
+            key = skill.lower()
+            if key not in seen_skills:
+                seen_skills.add(key)
+                detected_skills.append(skill)
+
+    # 2. Extract Contact Info & URLs
+    email_match = re.search(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', text)
+    phone_match = re.search(r'(\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}', text)
+    linkedin_match = re.search(r'https?://(www\.)?linkedin\.com/in/[a-zA-Z0-9\-_%]+/?', text)
+    github_match = re.search(r'https?://(www\.)?github\.com/[a-zA-Z0-9\-._]+/?', text)
+    portfolio_match = re.search(r'https?://[a-zA-Z0-9\-_.]+\.[a-zA-Z]{2,}(/[a-zA-Z0-9\-_.]*)?', text)
+
+    email = email_match.group(0) if email_match else ""
+    phone = phone_match.group(0) if phone_match else ""
+    linkedin_url = linkedin_match.group(0) if linkedin_match else ""
+    github_url = github_match.group(0) if github_match else ""
+    portfolio_url = portfolio_match.group(0) if (portfolio_match and not linkedin_match and not github_match) else ""
+
+    # 3. Extract Professional Summary / Bio directly from resume text
+    summary = ""
+    summary_match = re.search(r'(?:summary|profile|about me|professional summary|executive summary|career objective)[\s:]*\n+(.*?)(?=\n\s*\n|\n[A-Z\s]{4,}:|\Z)', text, re.IGNORECASE | re.DOTALL)
+    if summary_match:
+        summary = summary_match.group(1).strip()
+        summary = re.sub(r'\s+', ' ', summary)
+
+    if not summary or len(summary) < 20:
+        lines = [line.strip() for line in text.split('\n') if line.strip() and '@' not in line and 'http' not in line]
+        if len(lines) > 1:
+            summary = " ".join(lines[1:5])[:350]
+
+    # 4. Extract Job Titles / Roles
+    roles = []
+    role_matches = re.findall(r'\b(software engineer|full stack engineer|full stack developer|frontend developer|backend developer|data scientist|machine learning engineer|data analyst|devops engineer|cloud architect|product manager|project manager|ui/ux designer|qa engineer|systems engineer|intern)\b', text_lower, re.IGNORECASE)
+    if role_matches:
+        roles = list(dict.fromkeys([r.title() for r in role_matches]))
+
+    current_title = roles[0] if roles else ("Software Engineer" if detected_skills else "Candidate Profile")
+
+    # 5. Extract Education Summary
+    education_summary = ""
+    edu_match = re.search(r'(?:education|academic background|qualifications)[\s:]*\n+(.*?)(?=\n\s*\n|\n[A-Z\s]{4,}:|\Z)', text, re.IGNORECASE | re.DOTALL)
+    if edu_match:
+        education_summary = re.sub(r'\s+', ' ', edu_match.group(1).strip())[:250]
+
+    return {
+        "full_name": "",
+        "current_title": current_title,
+        "target_title": f"Senior {current_title}" if "Senior" not in current_title else current_title,
+        "experience_years": 2 if "intern" in current_title.lower() else 4,
+        "location": "",
+        "phone": phone,
+        "email": email,
+        "bio": summary or f"Experienced {current_title} proficient in {', '.join(detected_skills[:6]) if detected_skills else 'software development'}.",
+        "linkedin_url": linkedin_url,
+        "github_url": github_url,
+        "portfolio_url": portfolio_url,
+        "skills": detected_skills,
+        "roles": roles,
+        "experience": [],
+        "education": [],
+        "education_summary": education_summary,
+        "certifications": [],
+        "courses": [],
+        "languages": ["English"],
+        "achievements": "",
+        "summary": summary or f"Experienced {current_title} proficient in {', '.join(detected_skills[:6]) if detected_skills else 'software development'}."
+    }
+
+
 async def parse_resume(resume_text: str) -> Dict[str, Any]:
     """
     NLP resume parsing: extract skills, roles, experience, certifications, courses, personal info, and profile metadata.
@@ -108,7 +292,7 @@ Return ONLY a valid JSON object with this exact structure:
   "experience_years": <estimated total years of experience as integer>,
   "location": "City, State or Country (e.g., San Francisco, CA)",
   "phone": "Phone number if present",
-  "bio": "A compelling 2-4 sentence professional bio/summary based on their experience and skills",
+  "bio": "A compelling 3-5 sentence professional bio/summary based on their actual experience, skills, and background mentioned in the resume",
   "linkedin_url": "https://linkedin.com/in/... (if present, else empty string)",
   "github_url": "https://github.com/... (if present, else empty string)",
   "portfolio_url": "https://... (personal site/portfolio if present, else empty string)",
@@ -125,12 +309,13 @@ Return ONLY a valid JSON object with this exact structure:
   "courses": ["Deep Learning Specialization – Coursera", "Full Stack Web Development – Udemy", ...],
   "languages": ["English", "Spanish", ...],
   "achievements": "Key achievements, honors, or awards mentioned in the resume",
-  "summary": "2-3 sentence professional summary based on the resume"
+  "summary": "Full professional summary based on the resume"
 }}
 
 Rules:
 - Extract real URLs for linkedin_url, github_url, and portfolio_url if present in text.
 - "skills": ALL technical skills, tools, programming languages, frameworks, libraries, databases, cloud platforms, DevOps tools, architecture concepts, methodologies, and soft skills mentioned anywhere in the resume. Extract EVERY SINGLE skill found — do NOT summarize, omit, or limit the list; return all 30+ skills if present.
+- "bio": Create a rich, comprehensive 3-5 sentence professional summary based directly on the resume's text, experience bullets, and skills.
 - "certifications": industry certifications.
 - "courses": online courses, training bootcamps.
 - If a section or field has no items, return empty array [] or empty string "".
@@ -144,33 +329,13 @@ Resume Text:
         raw = await _chat_completion(
             [{"role": "user", "content": prompt}],
             json_mode=True,
+            feature="Resume Parser"
         )
         return _extract_json(raw)
     except Exception as e:
         import logging
-        logging.error(f"AI parse_resume failed: {e}")
-        return {
-            "full_name": "",
-            "current_title": "Software Engineer",
-            "target_title": "Senior Full Stack Engineer",
-            "experience_years": 3,
-            "location": "Remote",
-            "phone": "",
-            "bio": "Experienced software engineer with a strong background in web development, system architecture, and modern frameworks.",
-            "linkedin_url": "",
-            "github_url": "",
-            "portfolio_url": "",
-            "skills": ["Python", "JavaScript", "React", "SQL", "FastAPI"],
-            "roles": ["Software Engineer", "Full Stack Developer"],
-            "experience": [{"company": "Tech Corp", "title": "Software Engineer", "duration": "2020-2023", "description": "Developed web applications."}],
-            "education": [{"institution": "State University", "degree": "BS Computer Science", "year": "2020"}],
-            "education_summary": "BS Computer Science, State University (2020)",
-            "certifications": [],
-            "courses": [],
-            "languages": ["English"],
-            "achievements": "Built scalable web apps and led interface design.",
-            "summary": "Experienced software engineer with a strong background in full stack development."
-        }
+        logging.error(f"AI parse_resume failed: {e}. Executing NLP rule-based parser fallback.")
+        return _python_rule_based_resume_parser(resume_text)
 
 
 async def analyze_ats_and_gaps(resume_text: str, parsed_skills: list) -> Dict[str, Any]:
@@ -328,15 +493,29 @@ Return ONLY a valid JSON object with this exact structure:
 
 async def career_chat(user_message: str, user_context: Optional[str] = None) -> str:
     """AI career coach chatbot with user profile context."""
-    system_prompt = """You are CareerAI, an expert career intelligence coach. You help users with:
-- Career planning and path recommendations
-- Resume improvement tips
-- Interview preparation
-- Skill development guidance  
-- Job search strategies
-- Salary negotiation advice
+    system_prompt = """You are CareerAI, a specialized executive career intelligence coach.
 
-Be specific, actionable, and encouraging. Keep responses concise but helpful."""
+STRICT DOMAIN SCOPE RESTRICTION:
+- You are strictly prohibited from answering queries unrelated to career guidance, professional development, resume optimization, job search, interview prep, workplace skills, education/certifications, or salary negotiation.
+- IF THE USER'S QUERY IS UNRELATED TO CAREERS, RESUMES, JOBS, SKILLS, OR PROFESSIONAL GUIDANCE (e.g. general trivia, cooking/recipes, sports, entertainment, movies, gaming, non-career coding, casual chit-chat, or general science/history):
+  You MUST REJECT the request with a professional denial message structured exactly as follows:
+
+### 🛡️ Out of Scope Query
+I am your dedicated **CareerAI Advisor**, specialized exclusively in career guidance, resume ATS optimization, interview coaching, skill gap analysis, and job search strategy.
+
+I cannot assist with questions unrelated to professional development and career advancement. Please feel free to ask any question regarding:
+- 📄 Resume & Cover Letter Optimization
+- 💼 Job Search Strategies & Target Roles
+- 🎯 Interview Preparation & STAR Method Answers
+- 🚀 Skill Gap Analysis & Recommended Certifications
+- 📈 Career Transitions & Salary Negotiation
+
+RESPONSE FORMATTING RULES FOR CAREER QUERIES:
+- ALWAYS format career guidance into clean, highly structured, point-wise markdown.
+- Use clear markdown subheadings (e.g. ### 🎯 Action Plan, ### 💡 Key Recommendations, ### 🛠️ Recommended Skills, ### 📌 Next Steps).
+- ALWAYS use bullet points (•) or numbered lists (1, 2, 3) for all tips, recommendations, and step-by-step advice.
+- Use **bold text** for important skills, tools, key concepts, and action verbs.
+- Keep paragraphs short (1-2 sentences max). Make responses structured, scannable, and easy to read."""
 
     messages = [{"role": "system", "content": system_prompt}]
 
@@ -441,6 +620,7 @@ Rules:
         s1 = parsed_skills[0] if parsed_skills else "Python"
         s2 = parsed_skills[1] if len(parsed_skills) > 1 else "React"
         s3 = parsed_skills[2] if len(parsed_skills) > 2 else "Cloud Architecture"
+        s4 = parsed_skills[3] if len(parsed_skills) > 3 else "PostgreSQL"
 
         return [
             {
@@ -466,7 +646,7 @@ Rules:
                 "salary_max": 150000,
                 "job_type": "Hybrid",
                 "experience_level": "Mid-Senior",
-                "match_score": 88,
+                "match_score": 91,
                 "job_url": _build_job_url(f"{primary_role} Lead", "DataSphere Systems")
             },
             {
@@ -479,8 +659,47 @@ Rules:
                 "salary_max": 185000,
                 "job_type": "Full-time",
                 "experience_level": "Senior",
-                "match_score": 85,
+                "match_score": 88,
                 "job_url": _build_job_url(f"Staff {primary_role}", "NextGen Innovations")
+            },
+            {
+                "title": f"Principal {primary_role} Engineer",
+                "company": "Stripe Technologies",
+                "location": "Remote",
+                "description": f"Spearhead core backend and frontend platform scaling using {s1}, {s3}, and {s4}.",
+                "required_skills": [s1, s4, "Microservices", "Docker"],
+                "salary_min": 155000,
+                "salary_max": 195000,
+                "job_type": "Remote",
+                "experience_level": "Lead",
+                "match_score": 85,
+                "job_url": _build_job_url(f"Principal {primary_role}", "Stripe")
+            },
+            {
+                "title": f"{primary_role} - Full Stack Focus",
+                "company": "Vercel / Next Technologies",
+                "location": "Remote / Open",
+                "description": f"Build high-throughput web applications leveraging {s2} and cloud microservices.",
+                "required_skills": [s2, s1, "GraphQL", "TailwindCSS"],
+                "salary_min": 105000,
+                "salary_max": 145000,
+                "job_type": "Full-time",
+                "experience_level": "Mid-Level",
+                "match_score": 82,
+                "job_url": _build_job_url(f"{primary_role}", "Vercel")
+            },
+            {
+                "title": f"Lead {primary_role} Architect",
+                "company": "Databricks AI Labs",
+                "location": "Seattle, WA",
+                "description": f"Design next-generation AI platform services using {s1}, {s3}, and modern cloud stacks.",
+                "required_skills": [s1, s3, "AWS", "Kubernetes"],
+                "salary_min": 160000,
+                "salary_max": 210000,
+                "job_type": "Hybrid",
+                "experience_level": "Lead",
+                "match_score": 80,
+                "job_url": _build_job_url(f"Lead {primary_role}", "Databricks")
             }
         ]
 
@@ -540,6 +759,8 @@ Rules:
         
         target_gap = gap_skills[0] if gap_skills else "Cloud Architecture"
         second_gap = gap_skills[1] if len(gap_skills) > 1 else "CI/CD & DevOps"
+        third_gap = gap_skills[2] if len(gap_skills) > 2 else "System Design"
+        fourth_gap = gap_skills[3] if len(gap_skills) > 3 else "Microservices"
 
         return [
             {
@@ -564,7 +785,7 @@ Rules:
                 "is_free": False,
                 "rating": "4.7",
                 "url": _build_course_url(f"{second_gap} Bootcamp", "Udemy"),
-                "match_score": 91
+                "match_score": 92
             },
             {
                 "title": f"Free Crash Course: {target_gap} in 2026",
@@ -577,6 +798,42 @@ Rules:
                 "rating": "4.8",
                 "url": _build_course_url(f"{target_gap} tutorial", "YouTube"),
                 "match_score": 88
+            },
+            {
+                "title": f"{third_gap} Microservices & Scalable Systems",
+                "provider": "edX",
+                "description": f"Professional certificate program in {third_gap} designed by top university faculty.",
+                "skills_covered": [third_gap, "Distributed Systems", "Scalability"],
+                "duration": "8 weeks",
+                "level": "Advanced",
+                "is_free": False,
+                "rating": "4.8",
+                "url": _build_course_url(f"{third_gap} Professional Certificate", "edX"),
+                "match_score": 85
+            },
+            {
+                "title": f"Interactive {fourth_gap} Learning Path & Coding Drills",
+                "provider": "freeCodeCamp",
+                "description": f"Free self-paced curriculum building real-world projects with {fourth_gap}.",
+                "skills_covered": [fourth_gap, "Open Source", "Project Portfolio"],
+                "duration": "20 hours",
+                "level": "Intermediate",
+                "is_free": True,
+                "rating": "4.9",
+                "url": _build_course_url(f"{fourth_gap} curriculum", "freecodecamp"),
+                "match_score": 83
+            },
+            {
+                "title": f"Executive {target_gap} & Engineering Leadership",
+                "provider": "Coursera",
+                "description": f"Learn executive-level patterns for {target_gap} and leading high-performing engineering teams.",
+                "skills_covered": [target_gap, "Engineering Leadership", "Tech Strategy"],
+                "duration": "5 weeks",
+                "level": "Advanced",
+                "is_free": False,
+                "rating": "4.7",
+                "url": _build_course_url(f"{target_gap} Leadership", "Coursera"),
+                "match_score": 80
             }
         ]
 

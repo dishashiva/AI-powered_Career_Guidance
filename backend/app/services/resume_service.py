@@ -1,3 +1,4 @@
+import re
 import json
 import asyncio
 import logging
@@ -13,6 +14,113 @@ from . import ai_service
 logger = logging.getLogger(__name__)
 
 UPLOAD_DIR = Path(__file__).resolve().parent.parent.parent / "uploads" / "resumes"
+
+RESUME_KEYWORDS = [
+    # Core Resume Sections
+    "experience", "work experience", "employment history", "professional experience",
+    "education", "academic background", "qualifications", "skills", "technical skills",
+    "core competencies", "projects", "key projects", "summary", "professional summary",
+    "executive summary", "career objective", "certifications", "licenses", "achievements",
+    "accomplishments", "publications", "languages", "volunteering", "contact",
+    "curriculum vitae", "resume", "cv", "references", "extracurricular", "coursework",
+    # Professional & Education Indicators
+    "bachelor", "master", "degree", "b.tech", "m.tech", "b.s.", "m.s.", "phd", "diploma",
+    "university", "college", "school", "gpa", "cgpa", "percentage",
+    "developer", "engineer", "manager", "analyst", "consultant", "specialist",
+    "designer", "intern", "internship", "lead", "architect", "administrator",
+    "responsibilities", "technologies", "tools", "frameworks", "platforms",
+]
+
+ANTI_PATTERN_KEYWORDS = [
+    # Recipes
+    "ingredients", "tablespoon", "teaspoon", "preheat oven", "baking powder", "recipe",
+    # Financial Invoices / Receipts
+    "invoice #", "subtotal", "tax rate", "amount due", "balance due", "bill to:",
+    # Source Code / Configs (without resume context)
+    "dockerfile", "npm install", "git clone", "sudo apt-get",
+    # Legal / General Non-Resume Contracts
+    "indemnify", "party of the first part", "hereby agreed", "terms and conditions apply",
+]
+
+
+MARKSHEET_ANTI_PATTERNS = [
+    "marksheet", "mark sheet", "marks sheet", "grade sheet", "transcript",
+    "statement of marks", "grade card", "memorandum of marks", "memo of marks",
+    "controller of examinations", "registrar", "hall ticket", "roll no", "roll number",
+    "registration no", "registration number", "enrollment no", "enrollment number",
+    "seat no", "seat number", "total marks", "marks obtained", "maximum marks",
+    "credits earned", "credits registered", "sgpa", "cgpa", "provisional certificate",
+    "passing certificate", "grade point", "sub code", "course code", "subject code",
+    "semester i", "semester ii", "semester iii", "semester iv", "semester v", "semester vi",
+    "semester vii", "semester viii", "sem 1", "sem 2", "sem 3", "sem 4", "sem 5", "sem 6",
+    "tabulation sheet", "consolidated grade card", "academic transcript"
+]
+
+CAREER_SECTIONS_KEYWORDS = [
+    "experience", "work experience", "employment history", "professional experience",
+    "projects", "key projects", "technical skills", "skills", "core competencies",
+    "career summary", "professional summary", "executive summary", "responsibilities",
+    "work history", "internship", "intern", "developer", "engineer", "analyst"
+]
+
+
+def validate_is_resume(text: str, filename: str = "") -> tuple[bool, str]:
+    """
+    Validates whether the extracted text represents a genuine candidate resume.
+    Returns (is_valid: bool, reason: str).
+    """
+    if not text or len(text.strip()) < 60:
+        return False, "Document contains insufficient text to be parsed as a resume."
+
+    text_lower = text.lower()
+    fname_lower = (filename or "").lower()
+
+    # A. Check for Marksheet / Academic Transcript filename or content anti-patterns
+    marksheet_matches = [kw for kw in MARKSHEET_ANTI_PATTERNS if kw in text_lower or kw in fname_lower]
+    marksheet_score = len(set(marksheet_matches))
+
+    career_matches = [kw for kw in CAREER_SECTIONS_KEYWORDS if kw in text_lower]
+    career_score = len(set(career_matches))
+
+    if marksheet_score >= 2 and career_score < 2:
+        return False, "Uploaded file appears to be an academic mark sheet, grade card, or transcript, not a candidate resume. Please upload a candidate resume containing work experience, skills, and projects."
+
+    if any(fname_kw in fname_lower for fname_kw in ["marksheet", "mark_sheet", "transcript", "grade_card", "hallticket", "sem1", "sem2", "sem3", "sem4", "sem5", "sem6", "sem7", "sem8"]) and career_score < 2:
+        return False, "Uploaded file appears to be an academic mark sheet or transcript, not a candidate resume."
+
+    # B. Count resume structural keywords & sections
+    resume_matches = [kw for kw in RESUME_KEYWORDS if kw in text_lower]
+    resume_score = len(set(resume_matches))
+
+    # C. Check for contact indicators (Email or Phone or LinkedIn/GitHub URL)
+    email_pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
+    phone_pattern = r'(\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}'
+    link_pattern = r'(linkedin\.com|github\.com|portfolio|git|http)'
+
+    has_email = bool(re.search(email_pattern, text))
+    has_phone = bool(re.search(phone_pattern, text))
+    has_link = bool(re.search(link_pattern, text_lower))
+    contact_score = (1 if has_email else 0) + (1 if has_phone else 0) + (1 if has_link else 0)
+
+    # D. Check for non-resume document anti-patterns (recipes, invoices, contracts)
+    anti_matches = [kw for kw in ANTI_PATTERN_KEYWORDS if kw in text_lower]
+    anti_score = len(set(anti_matches))
+
+    if anti_score >= 2 and resume_score < 3:
+        return False, "Uploaded file appears to be a non-resume document (invoice, recipe, or contract)."
+
+    # E. Strict Candidate Resume Gatekeeper Decision Matrix:
+    # A valid candidate resume MUST have at least one genuine career section (Experience, Skills, Projects, Responsibilities)
+    if career_score == 0 and ("resume" not in fname_lower and "cv" not in fname_lower):
+        return False, "Uploaded document lacks candidate career sections (such as Work Experience, Projects, Technical Skills, or Professional Summary)."
+
+    if resume_score >= 3 or (resume_score >= 2 and contact_score >= 1) or (resume_score >= 1 and contact_score >= 2):
+        return True, "Valid candidate resume."
+
+    if ("resume" in fname_lower or "cv" in fname_lower) and (resume_score >= 1 or contact_score >= 1):
+        return True, "Valid candidate resume."
+
+    return False, "Document does not contain standard candidate resume sections (such as Work Experience, Skills, Education, or Contact Information)."
 
 
 def deduplicate_items(items) -> str:

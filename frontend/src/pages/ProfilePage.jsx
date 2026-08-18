@@ -60,22 +60,23 @@ function validateUrls(form) {
 
 /* ─── Profile Completeness ─────────────────────────────────────── */
 function calcCompleteness(user, profile) {
+  if (!profile) return 0;
   const checks = [
-    user?.full_name,
-    profile?.current_title,
-    profile?.target_title,
-    profile?.bio,
-    profile?.location,
-    profile?.phone,
-    profile?.linkedin_url,
-    profile?.github_url,
-    profile?.skills,
-    profile?.certifications,
-    profile?.interests,
-    profile?.education,
-    profile?.experience_years != null,
-    profile?.availability,
-    profile?.work_preference,
+    Boolean(profile.current_title && String(profile.current_title).trim()),
+    Boolean(profile.target_title && String(profile.target_title).trim()),
+    Boolean(profile.bio && String(profile.bio).trim()),
+    Boolean(profile.location && String(profile.location).trim()),
+    Boolean(profile.phone && String(profile.phone).trim()),
+    Boolean(profile.linkedin_url && String(profile.linkedin_url).trim()),
+    Boolean(profile.github_url && String(profile.github_url).trim()),
+    Boolean(profile.skills && String(profile.skills).trim()),
+    Boolean(profile.certifications && String(profile.certifications).trim()),
+    Boolean(profile.interests && String(profile.interests).trim()),
+    Boolean(profile.education && String(profile.education).trim()),
+    Boolean(profile.languages && String(profile.languages).trim()),
+    Boolean(profile.experience_years != null && Number(profile.experience_years) > 0),
+    Boolean(profile.availability && String(profile.availability).trim()),
+    Boolean(profile.work_preference && String(profile.work_preference).trim()),
   ];
   const filled = checks.filter(Boolean).length;
   return Math.round((filled / checks.length) * 100);
@@ -864,29 +865,6 @@ export default function ProfilePage() {
                     {user?.email}
                   </p>
                 </div>
-                <button
-                  className="btn btn-primary btn-sm"
-                  onClick={handleAutofillAI}
-                  disabled={autofilling}
-                  style={{
-                    background: 'linear-gradient(135deg, #7c3aed, var(--blue-500))',
-                    border: 'none',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 6,
-                    padding: '8px 14px',
-                    fontSize: 12,
-                    fontWeight: 600,
-                  }}
-                  title="Autofill profile fields from your latest AI analyzed resume"
-                >
-                  {autofilling ? (
-                    <Loader2 size={14} style={{ animation: 'spin 0.6s linear infinite' }} />
-                  ) : (
-                    <Sparkles size={14} />
-                  )}
-                  ✨ AI Autofill Profile
-                </button>
               </div>
 
               {/* Completeness bar */}

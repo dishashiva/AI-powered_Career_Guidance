@@ -12,6 +12,8 @@ class User(Base):
     hashed_password = Column(String(255), nullable=False)
     full_name = Column(String(255), nullable=False)
     is_active = Column(Boolean, default=True)
+    is_admin = Column(Boolean, default=False)
+    last_login_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
@@ -31,7 +33,7 @@ class Profile(Base):
     # Basic info
     current_title = Column(String(255))
     target_title = Column(String(255))
-    experience_years = Column(Integer, default=0)
+    experience_years = Column(Integer, nullable=True, default=None)
     location = Column(String(255))
     bio = Column(Text)
     phone = Column(String(50))
