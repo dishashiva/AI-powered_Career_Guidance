@@ -71,51 +71,37 @@ def validate_is_resume(text: str, filename: str = "") -> tuple[bool, str]:
     Validates whether the extracted text represents a genuine candidate resume.
     Returns (is_valid: bool, reason: str).
     """
-    if not text or len(text.strip()) < 30:
+    if not text or len(text.strip()) == 0:
         return False, "Unable to extract readable text from this document. If your file is a scanned image or image-only PDF, please export it as a text PDF or Word (.docx) document."
+
+    if text.startswith("[PDF extraction error:") or text.startswith("[DOCX extraction error:"):
+        return False, "Could not read text from this file. Please ensure the document is not password protected or corrupted."
 
     text_lower = text.lower()
     fname_lower = (filename or "").lower()
 
-    # A. Check for Marksheet / Academic Transcript filename or content anti-patterns
+    # Check for Marksheet / Academic Transcript filename or content anti-patterns
     marksheet_matches = [kw for kw in MARKSHEET_ANTI_PATTERNS if kw in text_lower or kw in fname_lower]
     marksheet_score = len(set(marksheet_matches))
 
     career_matches = [kw for kw in CAREER_SECTIONS_KEYWORDS if kw in text_lower]
     career_score = len(set(career_matches))
 
-    if marksheet_score >= 3 and career_score < 1:
-        return False, "Uploaded file appears to be an academic mark sheet, grade card, or transcript, not a candidate resume. Please upload a candidate resume containing work experience, skills, and projects."
+    if marksheet_score >= 4 and career_score == 0:
+        return False, "Uploaded file appears to be an academic mark sheet, grade card, or transcript, not a candidate resume."
 
-    if any(fname_kw in fname_lower for fname_kw in ["marksheet", "mark_sheet", "transcript", "grade_card", "hallticket", "sem1", "sem2", "sem3", "sem4", "sem5", "sem6", "sem7", "sem8"]) and career_score < 1:
+    if any(fname_kw in fname_lower for fname_kw in ["marksheet", "mark_sheet", "transcript", "grade_card", "hallticket"]) and career_score == 0:
         return False, "Uploaded file appears to be an academic mark sheet or transcript, not a candidate resume."
 
-    # B. Count resume structural keywords & sections
-    resume_matches = [kw for kw in RESUME_KEYWORDS if kw in text_lower]
-    resume_score = len(set(resume_matches))
-
-    # C. Check for contact indicators (Email or Phone or LinkedIn/GitHub URL)
-    email_pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
-    phone_pattern = r'(\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}'
-    link_pattern = r'(linkedin\.com|github\.com|portfolio|git|http)'
-
-    has_email = bool(re.search(email_pattern, text))
-    has_phone = bool(re.search(phone_pattern, text))
-    has_link = bool(re.search(link_pattern, text_lower))
-    contact_score = (1 if has_email else 0) + (1 if has_phone else 0) + (1 if has_link else 0)
-
-    # D. Check for non-resume document anti-patterns (recipes, invoices, contracts)
+    # Check for non-resume document anti-patterns (recipes, invoices, contracts)
     anti_matches = [kw for kw in ANTI_PATTERN_KEYWORDS if kw in text_lower]
     anti_score = len(set(anti_matches))
 
-    if anti_score >= 3 and resume_score < 2:
+    if anti_score >= 4 and career_score == 0:
         return False, "Uploaded file appears to be a non-resume document (invoice, recipe, or contract)."
 
-    # E. Decision Matrix: If document has text and any resume indicator, approve it
-    if resume_score >= 1 or career_score >= 1 or contact_score >= 1 or len(text.strip()) >= 100:
-        return True, "Valid candidate resume."
-
-    return False, "Document does not contain standard candidate resume sections (such as Work Experience, Skills, Education, or Contact Information)."
+    # Default to true for any text document uploaded as a candidate resume
+    return True, "Valid candidate resume."
 
 
 def deduplicate_items(items) -> str:
@@ -257,13 +243,25 @@ def apply_resume_to_user_profile(db: Session, user_id: int, parsed_data: dict, o
 
 
 def save_file_to_disk(file_bytes: bytes, filename: str, user_id: int) -> str:
-    user_dir = UPLOAD_DIR / str(user_id)
-    user_dir.mkdir(parents=True, exist_ok=True)
     ext = Path(filename).suffix.lower()
     unique_name = f"{uuid.uuid4().hex}{ext}"
-    file_path = user_dir / unique_name
-    file_path.write_bytes(file_bytes)
-    return str(file_path)
+    try:
+        user_dir = UPLOAD_DIR / str(user_id)
+        user_dir.mkdir(parents=True, exist_ok=True)
+        file_path = user_dir / unique_name
+        file_path.write_bytes(file_bytes)
+        return str(file_path)
+    except Exception as e:
+        logger.warning(f"Could not save to primary upload dir ({e}), trying /tmp directory...")
+        try:
+            tmp_dir = Path("/tmp") / "uploads" / "resumes" / str(user_id)
+            tmp_dir.mkdir(parents=True, exist_ok=True)
+            file_path = tmp_dir / unique_name
+            file_path.write_bytes(file_bytes)
+            return str(file_path)
+        except Exception as e2:
+            logger.error(f"Failed writing to /tmp directory: {e2}")
+            return f"virtual_upload_{unique_name}"
 
 
 def create_resume_record(db: Session, user_id: int, filename: str, file_path: str, text: str) -> Resume:
