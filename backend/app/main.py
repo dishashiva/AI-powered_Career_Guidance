@@ -43,12 +43,24 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.FRONTEND_URL, "http://localhost:5173", "http://localhost:3000"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# Include routers with /api prefix for Vercel serverless requests
+app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
+app.include_router(users.router, prefix="/api/users", tags=["Users"])
+app.include_router(resumes.router, prefix="/api/resumes", tags=["Resumes"])
+app.include_router(jobs.router, prefix="/api/jobs", tags=["Jobs"])
+app.include_router(courses.router, prefix="/api/courses", tags=["Courses"])
+app.include_router(ai.router, prefix="/api/ai", tags=["AI"])
+app.include_router(admin.router, prefix="/api/admin", tags=["Admin Dashboard"])
+app.include_router(feedback.router, prefix="/api/feedback", tags=["Feedback"])
+app.include_router(announcements.router, prefix="/api/announcements", tags=["Announcements"])
+
+# Include routers without /api prefix for direct calls
 app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
 app.include_router(users.router, prefix="/users", tags=["Users"])
 app.include_router(resumes.router, prefix="/resumes", tags=["Resumes"])
@@ -61,5 +73,6 @@ app.include_router(announcements.router, prefix="/announcements", tags=["Announc
 
 
 @app.get("/health", tags=["Health"])
+@app.get("/api/health", tags=["Health"])
 def health_check():
     return {"status": "ok", "service": settings.APP_NAME}
