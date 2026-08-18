@@ -687,16 +687,6 @@ export default function CareerDashboardPage() {
           >
             <Layers size={15} /> Dashboard Analytics
           </button>
-          <button
-            onClick={() => setActiveTab('resume_builder')}
-            style={{
-              padding: '10px 14px', background: 'none', border: 'none', borderBottom: activeTab === 'resume_builder' ? '2px solid var(--accent)' : '2px solid transparent',
-              fontWeight: activeTab === 'resume_builder' ? 600 : 500, color: activeTab === 'resume_builder' ? 'var(--accent)' : 'var(--text-secondary)',
-              cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, whiteSpace: 'nowrap'
-            }}
-          >
-            <FileText size={15} /> Resume Builder
-          </button>
         </div>
 
         <div style={{ padding: '60px 20px', textAlign: 'center', background: 'var(--bg-surface)', borderRadius: 'var(--radius-lg)', border: '1px solid var(--border)' }}>
@@ -704,12 +694,9 @@ export default function CareerDashboardPage() {
             <Brain size={24} color="var(--text-muted)" />
           </div>
           <h2 style={{ marginBottom: 6 }}>No resume analyzed yet</h2>
-          <p style={{ marginBottom: 20, fontSize: 14, color: 'var(--text-secondary)' }}>Upload a resume for AI analysis or start building a new custom resume with interactive templates!</p>
+          <p style={{ marginBottom: 20, fontSize: 14, color: 'var(--text-secondary)' }}>Upload your resume to unlock real-time AI career intelligence and skill gap analysis.</p>
           <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
             <a href="/dashboard" className="btn btn-primary">Upload Resume to Analyze</a>
-            <button onClick={() => setActiveTab('resume_builder')} className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <FileText size={15} /> Open Resume Builder
-            </button>
           </div>
         </div>
       </div>
@@ -745,60 +732,83 @@ export default function CareerDashboardPage() {
         />
 
         {/* Navigation Tabs for PPT Modules */}
-        <div style={{ display: 'flex', gap: 8, borderBottom: '1px solid var(--border)', marginBottom: 20, overflowX: 'auto' }}>
+        <div style={{
+          display: 'flex', gap: 6, padding: '4px', background: '#f1f5f9',
+          borderRadius: 12, marginBottom: 24, overflowX: 'auto', border: '1px solid #e2e8f0',
+        }}>
           <button
             onClick={() => setActiveTab('overview')}
             style={{
-              padding: '10px 14px', background: 'none', border: 'none', borderBottom: activeTab === 'overview' ? '2px solid var(--accent)' : '2px solid transparent',
-              fontWeight: activeTab === 'overview' ? 600 : 500, color: activeTab === 'overview' ? 'var(--accent)' : 'var(--text-secondary)',
-              cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, whiteSpace: 'nowrap'
+              padding: '8px 16px', background: activeTab === 'overview' ? '#ffffff' : 'transparent',
+              border: 'none', borderRadius: 8,
+              boxShadow: activeTab === 'overview' ? '0 1px 3px rgba(15,23,42,0.08)' : 'none',
+              fontWeight: activeTab === 'overview' ? 700 : 500,
+              color: activeTab === 'overview' ? '#4f46e5' : '#64748b',
+              cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 7, fontSize: 13, whiteSpace: 'nowrap',
+              transition: 'all 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
             }}
           >
-            <Layers size={15} /> Dashboard Analytics
+            <Layers size={15} color={activeTab === 'overview' ? '#4f46e5' : '#64748b'} /> Dashboard Analytics
           </button>
 
           <button
             onClick={() => setActiveTab('jd_match')}
             style={{
-              padding: '10px 14px', background: 'none', border: 'none', borderBottom: activeTab === 'jd_match' ? '2px solid var(--accent)' : '2px solid transparent',
-              fontWeight: activeTab === 'jd_match' ? 600 : 500, color: activeTab === 'jd_match' ? 'var(--accent)' : 'var(--text-secondary)',
-              cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, whiteSpace: 'nowrap'
+              padding: '8px 16px', background: activeTab === 'jd_match' ? '#ffffff' : 'transparent',
+              border: 'none', borderRadius: 8,
+              boxShadow: activeTab === 'jd_match' ? '0 1px 3px rgba(15,23,42,0.08)' : 'none',
+              fontWeight: activeTab === 'jd_match' ? 700 : 500,
+              color: activeTab === 'jd_match' ? '#4f46e5' : '#64748b',
+              cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 7, fontSize: 13, whiteSpace: 'nowrap',
+              transition: 'all 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
             }}
           >
-            <FileCheck size={15} /> ATS & JD Matcher
+            <FileCheck size={15} color={activeTab === 'jd_match' ? '#4f46e5' : '#64748b'} /> ATS & JD Matcher
           </button>
 
           <button
             onClick={() => setActiveTab('career')}
             style={{
-              padding: '10px 14px', background: 'none', border: 'none', borderBottom: activeTab === 'career' ? '2px solid var(--accent)' : '2px solid transparent',
-              fontWeight: activeTab === 'career' ? 600 : 500, color: activeTab === 'career' ? 'var(--accent)' : 'var(--text-secondary)',
-              cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, whiteSpace: 'nowrap'
+              padding: '8px 16px', background: activeTab === 'career' ? '#ffffff' : 'transparent',
+              border: 'none', borderRadius: 8,
+              boxShadow: activeTab === 'career' ? '0 1px 3px rgba(15,23,42,0.08)' : 'none',
+              fontWeight: activeTab === 'career' ? 700 : 500,
+              color: activeTab === 'career' ? '#4f46e5' : '#64748b',
+              cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 7, fontSize: 13, whiteSpace: 'nowrap',
+              transition: 'all 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
             }}
           >
-            <TrendingUp size={15} /> Career Paths & Salary
+            <TrendingUp size={15} color={activeTab === 'career' ? '#4f46e5' : '#64748b'} /> Career Paths & Salary
           </button>
 
           <button
             onClick={() => setActiveTab('improvements')}
             style={{
-              padding: '10px 14px', background: 'none', border: 'none', borderBottom: activeTab === 'improvements' ? '2px solid var(--accent)' : '2px solid transparent',
-              fontWeight: activeTab === 'improvements' ? 600 : 500, color: activeTab === 'improvements' ? 'var(--accent)' : 'var(--text-secondary)',
-              cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, whiteSpace: 'nowrap'
+              padding: '8px 16px', background: activeTab === 'improvements' ? '#ffffff' : 'transparent',
+              border: 'none', borderRadius: 8,
+              boxShadow: activeTab === 'improvements' ? '0 1px 3px rgba(15,23,42,0.08)' : 'none',
+              fontWeight: activeTab === 'improvements' ? 700 : 500,
+              color: activeTab === 'improvements' ? '#4f46e5' : '#64748b',
+              cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 7, fontSize: 13, whiteSpace: 'nowrap',
+              transition: 'all 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
             }}
           >
-            <Sparkles size={15} /> Resume Improvements
+            <Sparkles size={15} color={activeTab === 'improvements' ? '#4f46e5' : '#64748b'} /> Resume Improvements
           </button>
 
           <button
             onClick={() => setActiveTab('interview_prep')}
             style={{
-              padding: '10px 14px', background: 'none', border: 'none', borderBottom: activeTab === 'interview_prep' ? '2px solid var(--accent)' : '2px solid transparent',
-              fontWeight: activeTab === 'interview_prep' ? 600 : 500, color: activeTab === 'interview_prep' ? 'var(--accent)' : 'var(--text-secondary)',
-              cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, whiteSpace: 'nowrap'
+              padding: '8px 16px', background: activeTab === 'interview_prep' ? '#ffffff' : 'transparent',
+              border: 'none', borderRadius: 8,
+              boxShadow: activeTab === 'interview_prep' ? '0 1px 3px rgba(15,23,42,0.08)' : 'none',
+              fontWeight: activeTab === 'interview_prep' ? 700 : 500,
+              color: activeTab === 'interview_prep' ? '#4f46e5' : '#64748b',
+              cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 7, fontSize: 13, whiteSpace: 'nowrap',
+              transition: 'all 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
             }}
           >
-            <HelpCircle size={15} /> AI Interview Prep
+            <HelpCircle size={15} color={activeTab === 'interview_prep' ? '#4f46e5' : '#64748b'} /> AI Interview Prep
           </button>
         </div>
 

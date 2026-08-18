@@ -1,7 +1,13 @@
 import { useState, useRef, useEffect } from 'react';
 import { Send, Bot, User } from 'lucide-react';
+import { marked } from 'marked';
 import { aiAPI } from '../api/client';
 import toast from 'react-hot-toast';
+
+marked.setOptions({
+  gfm: true,
+  breaks: true,
+});
 
 const QUICK_PROMPTS = [
   "What skills should I learn next?",
@@ -43,53 +49,65 @@ export default function ChatInterface({ resumeId }) {
   };
 
   const renderContent = (text) => {
-    return text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+    if (!text) return '';
+    try {
+      return marked.parse(text);
+    } catch {
+      return text;
+    }
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <div style={{ flex: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: '#ffffff', borderRadius: 12 }}>
+      <div style={{ flex: 1, overflowY: 'auto', padding: '20px 20px', display: 'flex', flexDirection: 'column', gap: 16 }}>
         {messages.map((msg, i) => (
-          <div key={i} className="flex" style={{ gap: 10, flexDirection: msg.role === 'user' ? 'row-reverse' : 'row' }}>
+          <div key={i} className="flex" style={{ gap: 12, flexDirection: msg.role === 'user' ? 'row-reverse' : 'row' }}>
             <div style={{
-              width: 28, height: 28, borderRadius: 'var(--radius-md)', flexShrink: 0,
-              background: msg.role === 'assistant' ? 'var(--accent)' : 'var(--gray-100)',
+              width: 32, height: 32, borderRadius: 10, flexShrink: 0,
+              background: msg.role === 'assistant' ? 'linear-gradient(135deg, #4f46e5, #6366f1)' : '#f1f5f9',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
+              boxShadow: msg.role === 'assistant' ? '0 2px 6px rgba(79,70,229,0.25)' : 'none',
             }}>
-              {msg.role === 'assistant' ? <Bot size={14} color="#fff" /> : <User size={14} color="var(--text-muted)" />}
+              {msg.role === 'assistant' ? <Bot size={16} color="#fff" /> : <User size={16} color="#475569" />}
             </div>
-            <div style={{
-              maxWidth: '75%',
-              padding: '10px 14px',
-              borderRadius: msg.role === 'user' ? '12px 12px 4px 12px' : '12px 12px 12px 4px',
-              background: msg.role === 'user' ? 'var(--accent-subtle)' : 'var(--gray-50)',
-              border: '1px solid',
-              borderColor: msg.role === 'user' ? 'var(--border-accent)' : 'var(--border)',
-              fontSize: 13,
-              lineHeight: 1.6,
-              color: 'var(--text-primary)',
-            }}
+            <div
+              className="markdown-content"
+              style={{
+                maxWidth: '82%',
+                padding: '14px 18px',
+                borderRadius: msg.role === 'user' ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
+                background: msg.role === 'user' ? '#e0e7ff' : '#f8fafc',
+                border: '1px solid',
+                borderColor: msg.role === 'user' ? '#c7d2fe' : '#e2e8f0',
+                fontSize: 13.5,
+                lineHeight: 1.6,
+                color: msg.role === 'user' ? '#3730a3' : '#0f172a',
+                boxShadow: msg.role === 'assistant' ? '0 2px 6px rgba(15,23,42,0.03)' : 'none',
+              }}
               dangerouslySetInnerHTML={{ __html: renderContent(msg.content) }}
             />
           </div>
         ))}
 
         {loading && (
-          <div className="flex" style={{ gap: 10 }}>
+          <div className="flex" style={{ gap: 12 }}>
             <div style={{
-              width: 28, height: 28, borderRadius: 'var(--radius-md)',
-              background: 'var(--accent)',
+              width: 32, height: 32, borderRadius: 10,
+              background: 'linear-gradient(135deg, #4f46e5, #6366f1)',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}>
-              <Bot size={14} color="#fff" />
+              <Bot size={16} color="#fff" />
             </div>
             <div style={{
-              padding: '10px 14px', borderRadius: '12px 12px 12px 4px',
-              background: 'var(--gray-50)', border: '1px solid var(--border)',
-              display: 'flex', alignItems: 'center', gap: 6,
+              padding: '12px 18px', borderRadius: '16px 16px 16px 4px',
+              background: '#f8fafc', border: '1px solid #e2e8f0',
+              display: 'flex', alignItems: 'center', gap: 8,
             }}>
-              <div className="spinner" style={{ width: 14, height: 14 }} />
-              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Thinking...</span>
+              <span style={{
+                width: 6, height: 6, borderRadius: '50%', background: '#4f46e5',
+                animation: 'pulse 1.2s cubic-bezier(0, 0, 0.2, 1) infinite'
+              }} />
+              <span style={{ fontSize: 13, color: '#64748b', fontWeight: 500 }}>AI Coach is thinking…</span>
             </div>
           </div>
         )}
@@ -97,10 +115,21 @@ export default function ChatInterface({ resumeId }) {
       </div>
 
       {messages.length <= 2 && (
-        <div style={{ padding: '0 16px 10px' }}>
-          <div className="flex" style={{ flexWrap: 'wrap', gap: 6 }}>
+        <div style={{ padding: '0 20px 12px' }}>
+          <div className="flex" style={{ flexWrap: 'wrap', gap: 8 }}>
             {QUICK_PROMPTS.map((p) => (
-              <button key={p} onClick={() => send(p)} className="btn btn-secondary btn-sm" style={{ fontSize: 12 }}>
+              <button
+                key={p}
+                onClick={() => send(p)}
+                style={{
+                  background: '#f1f5f9', border: '1px solid #e2e8f0',
+                  borderRadius: 99, padding: '6px 14px', fontSize: 12,
+                  fontWeight: 500, color: '#334155', cursor: 'pointer',
+                  transition: 'all 0.15s ease',
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = '#e0e7ff'; e.currentTarget.style.color = '#4338ca'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = '#f1f5f9'; e.currentTarget.style.color = '#334155'; }}
+              >
                 {p}
               </button>
             ))}
@@ -109,26 +138,27 @@ export default function ChatInterface({ resumeId }) {
       )}
 
       <div style={{
-        padding: '10px 16px',
-        borderTop: '1px solid var(--border)',
-        display: 'flex', gap: 8,
+        padding: '12px 20px',
+        borderTop: '1px solid #e2e8f0',
+        display: 'flex', gap: 10, background: '#ffffff',
+        borderRadius: '0 0 12px 12px',
       }}>
         <input
           className="input"
-          placeholder="Ask your career coach..."
+          placeholder="Ask your career coach anything..."
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && send()}
           disabled={loading}
-          style={{ flex: 1 }}
+          style={{ flex: 1, borderRadius: 10 }}
         />
         <button
-          className="btn btn-primary btn-sm"
+          className="btn btn-primary"
           onClick={() => send()}
           disabled={loading || !input.trim()}
-          style={{ flexShrink: 0 }}
+          style={{ flexShrink: 0, borderRadius: 10, padding: '0 18px' }}
         >
-          <Send size={14} />
+          <Send size={15} />
         </button>
       </div>
     </div>

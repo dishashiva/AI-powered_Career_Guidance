@@ -378,18 +378,31 @@ export default function DashboardPage() {
       )}
 
       <div className="container page-content">
-        <div className="animate-fade-in" style={{ marginBottom: 32 }}>
-          <h1 style={{ fontSize: '1.5rem', marginBottom: 4 }}>
-            {getGreeting()}, {user?.full_name?.split(' ')[0]}
-          </h1>
-          <p style={{ fontSize: 14 }}>Upload a resume to get AI-powered career insights</p>
+        <div className="animate-fade-in" style={{
+          marginBottom: 28, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          flexWrap: 'wrap', gap: 16, borderBottom: '1px solid #e2e8f0', paddingBottom: 20
+        }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+              <h1 style={{ fontSize: '1.65rem', fontWeight: 800, color: '#0f172a', margin: 0 }}>
+                {getGreeting()}, {user?.full_name?.split(' ')[0]}
+              </h1>
+            </div>
+            <p style={{ fontSize: 14, color: '#64748b', margin: 0 }}>
+              Upload your resume to get instant ATS scoring, skill gap analysis, and tailored career recommendations.
+            </p>
+          </div>
         </div>
 
         {/* Upload Resume Card */}
-        <div className="card animate-fade-in" style={{ animationDelay: '50ms', marginBottom: 24 }}>
+        <div className="card animate-fade-in" style={{
+          animationDelay: '50ms', marginBottom: 24,
+          background: '#ffffff', border: '1px solid #e2e8f0',
+          boxShadow: '0 4px 16px -2px rgba(15, 23, 42, 0.04)',
+        }}>
           <div className="flex items-center gap-2" style={{ marginBottom: 16 }}>
-            <Upload size={16} color="var(--text-secondary)" />
-            <h2 style={{ fontSize: 15, fontWeight: 600 }}>Upload resume</h2>
+            <Upload size={18} color="#4f46e5" />
+            <h2 style={{ fontSize: 16, fontWeight: 700, color: '#0f172a' }}>Upload Resume</h2>
           </div>
           <ResumeUpload onUploadSuccess={handleUploadSuccess} />
         </div>
