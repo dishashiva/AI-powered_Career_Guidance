@@ -362,6 +362,19 @@ export default function AdminDashboardPage() {
     }
   };
 
+  const handleDeleteAnnouncement = async (annId, annTitle) => {
+    if (!window.confirm(`Are you sure you want to delete the announcement "${annTitle || 'this announcement'}"?`)) return;
+    try {
+      await adminAPI.deleteAnnouncement(annId);
+      toast.success('Announcement deleted successfully!');
+      if (annModal && annModal.id === annId) setAnnModal(null);
+      loadAnnouncements();
+      fetchStats();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Failed to delete announcement');
+    }
+  };
+
   // ─── Actions ──────────────────────────────────────────────────
   const handleToggleUserStatus = async (userId, currentActive, email) => {
     const actionLabel = !currentActive ? 'activate' : 'deactivate';
@@ -1921,13 +1934,7 @@ export default function AdminDashboardPage() {
                         </button>
                         <button
                           className="btn btn-ghost btn-sm"
-                          onClick={async () => {
-                            if (!window.confirm('Delete this announcement?')) return;
-                            await adminAPI.deleteAnnouncement(ann.id);
-                            toast.success('Announcement deleted');
-                            loadAnnouncements();
-                            fetchStats();
-                          }}
+                          onClick={() => handleDeleteAnnouncement(ann.id, ann.title)}
                           title="Delete Announcement"
                         >
                           <Trash2 size={14} color="var(--red-500)" />
@@ -2167,24 +2174,36 @@ export default function AdminDashboardPage() {
                 </div>
               </div>
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 8 }}>
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-sm"
-                  onClick={() => setAnnModal(null)}
-                  disabled={savingAnn}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="btn btn-primary btn-sm"
-                  disabled={savingAnn}
-                  style={{ gap: 6 }}
-                >
-                  {savingAnn ? <RefreshCw size={14} className="animate-spin" /> : <Bell size={14} />}
-                  {savingAnn ? 'Saving Announcement...' : (annModal.id ? 'Update Announcement' : 'Publish Announcement Banner')}
-                </button>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12 }}>
+                {annModal.id ? (
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => handleDeleteAnnouncement(annModal.id, annModal.title)}
+                    style={{ color: 'var(--red-500)', gap: 4 }}
+                  >
+                    <Trash2 size={14} /> Delete Announcement
+                  </button>
+                ) : <div />}
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => setAnnModal(null)}
+                    disabled={savingAnn}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="btn btn-primary btn-sm"
+                    disabled={savingAnn}
+                    style={{ gap: 6 }}
+                  >
+                    {savingAnn ? <RefreshCw size={14} className="animate-spin" /> : <Bell size={14} />}
+                    {savingAnn ? 'Saving Announcement...' : (annModal.id ? 'Update Announcement' : 'Publish Announcement Banner')}
+                  </button>
+                </div>
               </div>
             </form>
           </div>
