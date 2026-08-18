@@ -60,7 +60,9 @@ CAREER_SECTIONS_KEYWORDS = [
     "experience", "work experience", "employment history", "professional experience",
     "projects", "key projects", "technical skills", "skills", "core competencies",
     "career summary", "professional summary", "executive summary", "responsibilities",
-    "work history", "internship", "intern", "developer", "engineer", "analyst"
+    "work history", "internship", "intern", "developer", "engineer", "analyst",
+    "education", "technologies", "tools", "background", "summary", "profile",
+    "achievements", "certifications", "coursework", "about", "training", "activities", "work"
 ]
 
 
@@ -69,8 +71,8 @@ def validate_is_resume(text: str, filename: str = "") -> tuple[bool, str]:
     Validates whether the extracted text represents a genuine candidate resume.
     Returns (is_valid: bool, reason: str).
     """
-    if not text or len(text.strip()) < 60:
-        return False, "Document contains insufficient text to be parsed as a resume."
+    if not text or len(text.strip()) < 30:
+        return False, "Unable to extract readable text from this document. If your file is a scanned image or image-only PDF, please export it as a text PDF or Word (.docx) document."
 
     text_lower = text.lower()
     fname_lower = (filename or "").lower()
@@ -82,10 +84,10 @@ def validate_is_resume(text: str, filename: str = "") -> tuple[bool, str]:
     career_matches = [kw for kw in CAREER_SECTIONS_KEYWORDS if kw in text_lower]
     career_score = len(set(career_matches))
 
-    if marksheet_score >= 2 and career_score < 2:
+    if marksheet_score >= 3 and career_score < 1:
         return False, "Uploaded file appears to be an academic mark sheet, grade card, or transcript, not a candidate resume. Please upload a candidate resume containing work experience, skills, and projects."
 
-    if any(fname_kw in fname_lower for fname_kw in ["marksheet", "mark_sheet", "transcript", "grade_card", "hallticket", "sem1", "sem2", "sem3", "sem4", "sem5", "sem6", "sem7", "sem8"]) and career_score < 2:
+    if any(fname_kw in fname_lower for fname_kw in ["marksheet", "mark_sheet", "transcript", "grade_card", "hallticket", "sem1", "sem2", "sem3", "sem4", "sem5", "sem6", "sem7", "sem8"]) and career_score < 1:
         return False, "Uploaded file appears to be an academic mark sheet or transcript, not a candidate resume."
 
     # B. Count resume structural keywords & sections
@@ -106,18 +108,11 @@ def validate_is_resume(text: str, filename: str = "") -> tuple[bool, str]:
     anti_matches = [kw for kw in ANTI_PATTERN_KEYWORDS if kw in text_lower]
     anti_score = len(set(anti_matches))
 
-    if anti_score >= 2 and resume_score < 3:
+    if anti_score >= 3 and resume_score < 2:
         return False, "Uploaded file appears to be a non-resume document (invoice, recipe, or contract)."
 
-    # E. Strict Candidate Resume Gatekeeper Decision Matrix:
-    # A valid candidate resume MUST have at least one genuine career section (Experience, Skills, Projects, Responsibilities)
-    if career_score == 0 and ("resume" not in fname_lower and "cv" not in fname_lower):
-        return False, "Uploaded document lacks candidate career sections (such as Work Experience, Projects, Technical Skills, or Professional Summary)."
-
-    if resume_score >= 3 or (resume_score >= 2 and contact_score >= 1) or (resume_score >= 1 and contact_score >= 2):
-        return True, "Valid candidate resume."
-
-    if ("resume" in fname_lower or "cv" in fname_lower) and (resume_score >= 1 or contact_score >= 1):
+    # E. Decision Matrix: If document has text and any resume indicator, approve it
+    if resume_score >= 1 or career_score >= 1 or contact_score >= 1 or len(text.strip()) >= 100:
         return True, "Valid candidate resume."
 
     return False, "Document does not contain standard candidate resume sections (such as Work Experience, Skills, Education, or Contact Information)."
