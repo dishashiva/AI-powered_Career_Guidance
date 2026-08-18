@@ -45,17 +45,25 @@ async def upload_resume(
     if len(file_bytes) > MAX_FILE_SIZE:
         raise HTTPException(status_code=400, detail="File too large (max 10 MB)")
 
-    # 1. Save file to disk (fast)
-    file_path = resume_service.save_file_to_disk(file_bytes, file.filename, current_user.id)
-
-    # 2. Extract text (fast — pure Python, no network)
+    # 1. Extract text (fast — pure Python, no network)
     from ..utils.file_utils import extract_text
     text = extract_text(file_bytes, file.filename)
 
-    # 3. Persist the initial record immediately
+    # 2. Validate that document is a genuine candidate resume
+    is_valid, reason = resume_service.validate_is_resume(text, file.filename)
+    if not is_valid:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid document: The uploaded file is not a resume. {reason}"
+        )
+
+    # 3. Save file to disk (fast)
+    file_path = resume_service.save_file_to_disk(file_bytes, file.filename, current_user.id)
+
+    # 4. Persist the initial record immediately
     resume = resume_service.create_resume_record(db, current_user.id, file.filename, file_path, text)
 
-    # 4. Schedule AI pipeline in the background (non-blocking)
+    # 5. Schedule AI pipeline in the background (non-blocking)
     background_tasks.add_task(_run_ai_pipeline_with_own_session, resume.id, text)
 
     # 5. Return immediately — frontend will poll for status

@@ -17,12 +17,20 @@ class Settings(BaseSettings):
 
     # Groq API
     GROQ_API_KEY: str = ""
-    GROQ_MODEL: str = "llama-3.3-70b-versatile"
+    GROQ_MODEL: str = "groq/compound-mini"
     GROQ_BASE_URL: str = "https://api.groq.com/openai/v1"
 
     # App
     APP_NAME: str = "Career Intelligence Platform"
+    ENVIRONMENT: str = "development"
     FRONTEND_URL: str = "http://localhost:5173"
+
+    # SMTP Email Configuration (Yahoo Mail)
+    SMTP_HOST: str = "smtp.mail.yahoo.com"
+    SMTP_PORT: int = 587
+    SMTP_USER: str = "darshanxd@yahoo.com"
+    SMTP_PASSWORD: str = "dhgcrxoltibibtaf"
+    SMTP_FROM_EMAIL: str = "darshanxd@yahoo.com"
 
     @property
     def DATABASE_URL(self) -> str:
