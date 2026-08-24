@@ -321,41 +321,51 @@ export default function AdminDashboardPage() {
   const loadAnnouncements = async () => {
     try {
       const res = await adminAPI.listAnnouncements();
-      setAnnouncements(res.data);
-    } catch {
+      setAnnouncements(Array.isArray(res.data) ? res.data : []);
+    } catch (err) {
+      console.error('Failed to load announcements:', err);
       toast.error('Failed to load announcements');
     }
   };
 
   const handleSaveAnnouncement = async (e) => {
     e.preventDefault();
-    if (!annModal || !annModal.title.trim() || !annModal.message.trim()) {
+    if (!annModal || !annModal.title?.trim() || !annModal.message?.trim()) {
       toast.error('Please enter both title and message for the announcement');
       return;
     }
     setSavingAnn(true);
     try {
       if (annModal.id) {
-        await adminAPI.updateAnnouncement(annModal.id, {
+        const res = await adminAPI.updateAnnouncement(annModal.id, {
           title: annModal.title.trim(),
           message: annModal.message.trim(),
           type: annModal.type || 'info',
           is_active: annModal.is_active ?? true,
         });
         toast.success('Announcement updated successfully!');
+        if (res.data) {
+          setAnnouncements((prev) =>
+            prev.map((a) => (a.id === annModal.id ? res.data : a))
+          );
+        }
       } else {
-        await adminAPI.createAnnouncement({
+        const res = await adminAPI.createAnnouncement({
           title: annModal.title.trim(),
           message: annModal.message.trim(),
           type: annModal.type || 'info',
           is_active: annModal.is_active ?? true,
         });
         toast.success('Announcement broadcasted to all users!');
+        if (res.data) {
+          setAnnouncements((prev) => [res.data, ...prev]);
+        }
       }
       setAnnModal(null);
-      loadAnnouncements();
-      fetchStats();
+      await loadAnnouncements();
+      await fetchStats();
     } catch (err) {
+      console.error('Failed to save announcement:', err);
       toast.error(err.response?.data?.detail || 'Failed to save announcement');
     } finally {
       setSavingAnn(false);
@@ -367,10 +377,12 @@ export default function AdminDashboardPage() {
     try {
       await adminAPI.deleteAnnouncement(annId);
       toast.success('Announcement deleted successfully!');
+      setAnnouncements((prev) => prev.filter((a) => a.id !== annId));
       if (annModal && annModal.id === annId) setAnnModal(null);
-      loadAnnouncements();
-      fetchStats();
+      await loadAnnouncements();
+      await fetchStats();
     } catch (err) {
+      console.error('Failed to delete announcement:', err);
       toast.error(err.response?.data?.detail || 'Failed to delete announcement');
     }
   };
