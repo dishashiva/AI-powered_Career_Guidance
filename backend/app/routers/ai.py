@@ -47,13 +47,16 @@ async def generate_interview_prep(
             if not target_role:
                 target_role = raw.get("target_title") or raw.get("current_title") or (roles[0] if roles else "")
 
-    return await ai_service.generate_interview_questions(
-        skills=skills,
-        roles=roles,
-        resume_text=text_extract,
-        target_role=target_role,
-        job_description=body.job_description or "",
-    )
+    try:
+        return await ai_service.generate_interview_questions(
+            skills=skills,
+            roles=roles,
+            resume_text=text_extract,
+            target_role=target_role,
+            job_description=body.job_description or "",
+        )
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=str(e))
 
 
 @router.post("/chat", response_model=ChatResponse)
@@ -96,8 +99,11 @@ async def chat(
                 f"ATS Score: {resume.ats_score}"
             )
 
-    reply = await ai_service.career_chat(body.message, context)
-    return {"reply": reply}
+    try:
+        reply = await ai_service.career_chat(body.message, context)
+        return {"reply": reply}
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=str(e))
 
 
 @router.post("/salary")
@@ -106,13 +112,16 @@ async def predict_salary(
     current_user: User = Depends(get_current_user),
 ):
     """Predict salary range for a given role and skill set."""
-    result = await ai_service.predict_salary(
-        body.job_title,
-        body.skills,
-        body.experience_years,
-        body.location,
-    )
-    return result
+    try:
+        result = await ai_service.predict_salary(
+            body.job_title,
+            body.skills,
+            body.experience_years,
+            body.location,
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=str(e))
 
 
 @router.get("/analyze/{resume_id}")
@@ -133,15 +142,18 @@ async def analyze_resume(
     roles = json.loads(resume.parsed_roles or "[]")
     summary = ""
 
-    ats_data = await ai_service.analyze_ats_and_gaps(resume.text_extract or "", skills)
-    career_data = await ai_service.predict_career_paths(skills, roles, summary)
+    try:
+        ats_data = await ai_service.analyze_ats_and_gaps(resume.text_extract or "", skills)
+        career_data = await ai_service.predict_career_paths(skills, roles, summary)
 
-    return {
-        "ats_score": ats_data.get("ats_score", 0),
-        "ats_breakdown": ats_data.get("ats_breakdown", {}),
-        "skill_gaps": ats_data.get("skill_gaps", []),
-        "strengths": ats_data.get("strengths", []),
-        "recommendations": ats_data.get("recommendations", []),
-        "career_paths": career_data.get("career_paths", []),
-        "recommended_next_roles": career_data.get("recommended_next_roles", []),
-    }
+        return {
+            "ats_score": ats_data.get("ats_score", 0),
+            "ats_breakdown": ats_data.get("ats_breakdown", {}),
+            "skill_gaps": ats_data.get("skill_gaps", []),
+            "strengths": ats_data.get("strengths", []),
+            "recommendations": ats_data.get("recommendations", []),
+            "career_paths": career_data.get("career_paths", []),
+            "recommended_next_roles": career_data.get("recommended_next_roles", []),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=str(e))

@@ -80,27 +80,61 @@ def validate_is_resume(text: str, filename: str = "") -> tuple[bool, str]:
     text_lower = text.lower()
     fname_lower = (filename or "").lower()
 
-    # Check for Marksheet / Academic Transcript filename or content anti-patterns
+    # 1. Reject very short documents (less than 80 words)
+    words = [w for w in text.split() if len(w) > 1]
+    if len(words) < 50:
+        return False, "Uploaded file contains too little text to be a valid resume. Please upload a complete resume document."
+
+    # 2. Check for Marksheet / Academic Transcript filename or content anti-patterns
     marksheet_matches = [kw for kw in MARKSHEET_ANTI_PATTERNS if kw in text_lower or kw in fname_lower]
     marksheet_score = len(set(marksheet_matches))
-
     career_matches = [kw for kw in CAREER_SECTIONS_KEYWORDS if kw in text_lower]
     career_score = len(set(career_matches))
 
-    if marksheet_score >= 4 and career_score == 0:
-        return False, "Uploaded file appears to be an academic mark sheet, grade card, or transcript, not a candidate resume."
+    if marksheet_score >= 3 and (career_score <= 2 or marksheet_score > career_score):
+        return False, "Uploaded file appears to be an academic mark sheet, grade card, or transcript, not a professional resume."
 
-    if any(fname_kw in fname_lower for fname_kw in ["marksheet", "mark_sheet", "transcript", "grade_card", "hallticket"]) and career_score == 0:
-        return False, "Uploaded file appears to be an academic mark sheet or transcript, not a candidate resume."
+    if any(fname_kw in fname_lower for fname_kw in ["marksheet", "mark_sheet", "transcript", "grade_card", "hallticket", "certificate"]):
+        if career_score <= 2:
+            return False, "Uploaded file appears to be an academic certificate, transcript, or grade card, not a candidate resume."
 
-    # Check for non-resume document anti-patterns (recipes, invoices, contracts)
+    # 3. Check for non-resume document anti-patterns (recipes, invoices, receipts, source code, research papers, legal contracts)
     anti_matches = [kw for kw in ANTI_PATTERN_KEYWORDS if kw in text_lower]
     anti_score = len(set(anti_matches))
 
-    if anti_score >= 4 and career_score == 0:
-        return False, "Uploaded file appears to be a non-resume document (invoice, recipe, or contract)."
+    if anti_score >= 2:
+        return False, "Uploaded file appears to be a non-resume document (invoice, recipe, receipt, code file, or contract)."
 
-    # Default to true for any text document uploaded as a candidate resume
+    # 4. Check for typical Resume structural indicators:
+    # Must have at least 2 distinct resume core signals:
+    # - Section headings: experience / education / skills / projects / summary
+    # - Contact indicators: email / phone / linkedin / github
+    # - Professional skills from skill list
+    has_contact = bool(
+        re.search(r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+', text) or
+        re.search(r'(\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}', text) or
+        "linkedin" in text_lower or "github" in text_lower or "contact" in text_lower
+    )
+
+    core_sections = ["experience", "work experience", "education", "skills", "projects", "summary", "qualifications", "profile", "employment"]
+    matched_sections = [s for s in core_sections if s in text_lower]
+
+    skills_detected = [s for s in ai_service.KNOWN_SKILLS_LIST if re.search(r'(?<![a-zA-Z0-9])' + re.escape(s.lower()) + r'(?![a-zA-Z0-9])', text_lower)]
+
+    # Scoring resume validity
+    validity_score = 0
+    if has_contact:
+        validity_score += 1
+    if len(matched_sections) >= 2:
+        validity_score += 2
+    elif len(matched_sections) >= 1:
+        validity_score += 1
+    if len(skills_detected) >= 2:
+        validity_score += 1
+
+    if validity_score < 2:
+        return False, "Uploaded document does not have standard resume structure (missing contact info, skills, education, or work experience sections). Please upload a valid resume."
+
     return True, "Valid candidate resume."
 
 

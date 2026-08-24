@@ -40,10 +40,16 @@ class Settings(BaseSettings):
         )
 
     class Config:
-        env_file = ".env"
+        import os
+        from pathlib import Path
+        _env_path = Path(__file__).resolve().parent.parent / ".env"
+        env_file = str(_env_path) if _env_path.exists() else ".env"
         extra = "ignore"
 
 
 @lru_cache()
 def get_settings() -> Settings:
     return Settings()
+
+
+settings = get_settings()

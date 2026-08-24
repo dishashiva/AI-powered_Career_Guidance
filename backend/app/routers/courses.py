@@ -1,6 +1,5 @@
-import json
 from typing import Optional
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models.user import User
@@ -18,8 +17,11 @@ async def get_course_recommendations(
     db: Session = Depends(get_db),
 ):
     """Get AI-personalized course recommendations based on the user's skill gaps."""
-    courses = await recommendation_service.get_course_recommendations(db, current_user.id, resume_id=resume_id)
-    return {"courses": courses, "count": len(courses)}
+    try:
+        courses = await recommendation_service.get_course_recommendations(db, current_user.id, resume_id=resume_id)
+        return {"courses": courses, "count": len(courses)}
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=str(e))
 
 
 @router.get("/learning-path")
@@ -40,6 +42,9 @@ async def get_learning_path(
         raw = json.loads(resume.parsed_raw_json)
         target_role = raw.get("target_title") or raw.get("current_title") or ""
 
-    roadmap = await ai_service.generate_learning_path(skill_gaps=skill_gaps, target_role=target_role)
-    return roadmap
+    try:
+        roadmap = await ai_service.generate_learning_path(skill_gaps=skill_gaps, target_role=target_role)
+        return roadmap
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=str(e))
 

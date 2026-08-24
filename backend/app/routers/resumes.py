@@ -57,6 +57,15 @@ async def upload_resume(
             detail=f"Invalid document: The uploaded file is not a resume. {reason}"
         )
 
+    # 3. Ping AI service to ensure LLM is available and responsive before processing
+    try:
+        await ai_service.ping_ai_service()
+    except Exception as ping_err:
+        raise HTTPException(
+            status_code=503,
+            detail=f"AI Service is currently unavailable. Please try again in a few seconds. ({str(ping_err)})"
+        )
+
     # 3. Save file to disk (fast)
     file_path = resume_service.save_file_to_disk(file_bytes, file.filename, current_user.id)
 
@@ -288,13 +297,16 @@ async def compare_resume_with_jd(
         raise HTTPException(status_code=404, detail="Resume not found")
 
     skills = json.loads(resume.parsed_skills or "[]")
-    result = await ai_service.compare_resume_with_jd(
-        resume_text=resume.text_extract or "",
-        parsed_skills=skills,
-        job_description=body.job_description,
-        job_title=body.job_title or "",
-    )
-    return result
+    try:
+        result = await ai_service.compare_resume_with_jd(
+            resume_text=resume.text_extract or "",
+            parsed_skills=skills,
+            job_description=body.job_description,
+            job_title=body.job_title or "",
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=str(e))
 
 
 @router.get("/{resume_id}/improvements")
@@ -313,9 +325,12 @@ async def get_resume_improvements(
     raw = json.loads(resume.parsed_raw_json or "{}")
     target_role = raw.get("target_title") or raw.get("current_title") or ""
 
-    improvements = await ai_service.generate_resume_improvements(
-        resume_text=resume.text_extract or "",
-        target_role=target_role,
-    )
-    return improvements
+    try:
+        improvements = await ai_service.generate_resume_improvements(
+            resume_text=resume.text_extract or "",
+            target_role=target_role,
+        )
+        return improvements
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=str(e))
 

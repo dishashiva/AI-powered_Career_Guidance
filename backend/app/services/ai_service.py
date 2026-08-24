@@ -43,73 +43,117 @@ def _get_headers() -> Dict[str, str]:
     return headers
 
 
+FALLBACK_MODELS = [
+    "openai/gpt-oss-20b",
+    "qwen/qwen3.6-27b",
+    "openai/gpt-oss-120b",
+    "allam-2-7b",
+    "groq/compound-mini",
+    "groq/compound"
+]
+
+
 def _sync_chat_completion(url: str, headers: Dict[str, str], payload: Dict[str, Any], feature: str = "General AI") -> str:
     start_time = time.time()
-    model = payload.get("model", "llama-3.3-70b-versatile")
+    requested_model = payload.get("model", "openai/gpt-oss-20b")
     provider = "groq"
-    try:
-        with httpx.Client(timeout=120.0, trust_env=False) as client:
-            response = client.post(url, headers=headers, json=payload)
-            latency_ms = round((time.time() - start_time) * 1000, 2)
-            if response.status_code != 200:
-                print(f"[DEBUG Groq Error {response.status_code}]: {response.text}", flush=True)
-                logging.error(f"[DEBUG Groq Error {response.status_code}]: {response.text}")
-                _log_usage_to_db(
-                    provider=provider,
-                    model=model,
-                    feature=feature,
-                    prompt_tokens=0,
-                    completion_tokens=0,
-                    total_tokens=0,
-                    latency_ms=latency_ms,
-                    status_code=response.status_code,
-                    is_success=False,
-                    error_message=response.text[:500]
-                )
-            response.raise_for_status()
-            data = response.json()
 
-            usage = data.get("usage", {})
-            p_tokens = usage.get("prompt_tokens", 0)
-            c_tokens = usage.get("completion_tokens", 0)
-            t_tokens = usage.get("total_tokens", p_tokens + c_tokens)
+    # Build model attempt list starting with requested model
+    models_to_try = [requested_model] + [m for m in FALLBACK_MODELS if m != requested_model]
+    last_exception = None
 
-            content = data["choices"][0]["message"]["content"]
+    with httpx.Client(timeout=120.0, trust_env=False) as client:
+        for model_candidate in models_to_try:
+            current_payload = dict(payload)
+            current_payload["model"] = model_candidate
+            
+            # Retry up to 3 times per model on 429 rate limit
+            for attempt in range(3):
+                try:
+                    response = client.post(url, headers=headers, json=current_payload)
+                    latency_ms = round((time.time() - start_time) * 1000, 2)
+                    
+                    if response.status_code == 429:
+                        print(f"[DEBUG Groq Rate Limit 429 on {model_candidate} (Attempt {attempt+1})]: {response.text[:200]}", flush=True)
+                        retry_after = 2 * (attempt + 1)
+                        try:
+                            resp_json = response.json()
+                            msg = resp_json.get("error", {}).get("message", "")
+                            match = re.search(r'try again in ([\d\.]+)s', msg)
+                            if match:
+                                wait_sec = float(match.group(1))
+                                if wait_sec <= 4.0:
+                                    time.sleep(wait_sec + 0.5)
+                                    continue
+                        except Exception:
+                            pass
+                        
+                        time.sleep(retry_after)
+                        if attempt == 2:
+                            break
+                        continue
 
-            if t_tokens == 0:
-                msg_str = str(payload.get("messages", ""))
-                p_tokens = max(10, len(msg_str) // 4)
-                c_tokens = max(10, len(content) // 4)
-                t_tokens = p_tokens + c_tokens
+                    # If model not found or forbidden, immediately try next model
+                    if response.status_code in (404, 400):
+                        print(f"[DEBUG Groq Status {response.status_code} on {model_candidate}]: {response.text[:200]} - trying next fallback model...", flush=True)
+                        break
 
-            _log_usage_to_db(
-                provider=provider,
-                model=model,
-                feature=feature,
-                prompt_tokens=p_tokens,
-                completion_tokens=c_tokens,
-                total_tokens=t_tokens,
-                latency_ms=latency_ms,
-                status_code=200,
-                is_success=True,
-            )
+                    if response.status_code != 200:
+                        print(f"[DEBUG Groq Error {response.status_code} on {model_candidate}]: {response.text}", flush=True)
+                        logging.error(f"[DEBUG Groq Error {response.status_code}]: {response.text}")
+                        response.raise_for_status()
 
-            return content
-    except Exception as e:
-        latency_ms = round((time.time() - start_time) * 1000, 2)
-        _log_usage_to_db(
-            provider=provider,
-            model=model,
-            feature=feature,
-            prompt_tokens=0,
-            completion_tokens=0,
-            total_tokens=0,
-            latency_ms=latency_ms,
-            status_code=500,
-            is_success=False,
-            error_message=str(e)[:500]
-        )
-        raise
+                    data = response.json()
+                    usage = data.get("usage", {})
+                    p_tokens = usage.get("prompt_tokens", 0)
+                    c_tokens = usage.get("completion_tokens", 0)
+                    t_tokens = usage.get("total_tokens", p_tokens + c_tokens)
+                    content = data["choices"][0]["message"]["content"]
+
+                    if t_tokens == 0:
+                        msg_str = str(current_payload.get("messages", ""))
+                        p_tokens = max(10, len(msg_str) // 4)
+                        c_tokens = max(10, len(content) // 4)
+                        t_tokens = p_tokens + c_tokens
+
+                    _log_usage_to_db(
+                        provider=provider,
+                        model=model_candidate,
+                        feature=feature,
+                        prompt_tokens=p_tokens,
+                        completion_tokens=c_tokens,
+                        total_tokens=t_tokens,
+                        latency_ms=latency_ms,
+                        status_code=200,
+                        is_success=True,
+                    )
+                    return content
+
+                except httpx.HTTPStatusError as e:
+                    last_exception = e
+                    if e.response.status_code in (404, 429, 400):
+                        break # Switch to next candidate model
+                    raise
+                except Exception as e:
+                    last_exception = e
+                    time.sleep(1)
+
+    latency_ms = round((time.time() - start_time) * 1000, 2)
+    _log_usage_to_db(
+        provider=provider,
+        model=requested_model,
+        feature=feature,
+        prompt_tokens=0,
+        completion_tokens=0,
+        total_tokens=0,
+        latency_ms=latency_ms,
+        status_code=429 if isinstance(last_exception, httpx.HTTPStatusError) and last_exception.response.status_code == 429 else 500,
+        is_success=False,
+        error_message=str(last_exception)[:500] if last_exception else "All Groq model attempts failed"
+    )
+    if last_exception:
+        raise last_exception
+    raise ValueError("Groq AI service is currently unavailable on all configured models. Please check your Groq API key and try again.")
 
 
 async def _chat_completion(messages: list, json_mode: bool = False, feature: str = "General AI") -> str:
@@ -135,12 +179,9 @@ async def _chat_completion(messages: list, json_mode: bool = False, feature: str
         return await asyncio.to_thread(_sync_chat_completion, url, headers, payload, feature)
     except httpx.HTTPStatusError as e:
         error_body = e.response.text if e.response is not None else str(e)
-        print(f"[DEBUG Groq HTTPError] Status: {e.response.status_code if e.response else 'None'}", flush=True)
-        print(f"[DEBUG Groq HTTPError] Body: {error_body}", flush=True)
         logging.error(f"Groq API HTTP Error {e.response.status_code if e.response is not None else 'Unknown'}: {error_body}")
         raise ValueError(f"Groq API Error ({e.response.status_code if e.response is not None else 'Error'}): {error_body}") from e
     except Exception as e:
-        print(f"[DEBUG Groq Exception] Type: {type(e).__name__}: {e}", flush=True)
         logging.error(f"Groq API Request failed: {e}")
         raise
 
@@ -277,52 +318,83 @@ def _python_rule_based_resume_parser(resume_text: str) -> Dict[str, Any]:
     }
 
 
+async def ping_ai_service() -> bool:
+    """Fast, lightweight health check ping (1-2 tokens) to test if Groq LLM is currently responsive."""
+    try:
+        raw = await _chat_completion(
+            [{"role": "user", "content": "1"}],
+            feature="AI Health Ping"
+        )
+        return bool(raw and len(raw.strip()) > 0)
+    except Exception as e:
+        logging.warning(f"AI Health Ping failed: {e}")
+        raise ValueError(f"AI Service is currently unavailable or rate limited. Please try again in a few moments. ({str(e)})")
+
+
 async def parse_resume(resume_text: str) -> Dict[str, Any]:
     """
     NLP resume parsing: extract skills, roles, experience, certifications, courses, personal info, and profile metadata.
-    Returns a dict with complete profile structure for user autofill.
+    Extracts ALL candidate skills without truncation.
     """
-    prompt = f"""You are an expert resume parser and career advisor AI. Analyze the following resume text and extract structured profile information.
+    # Clean text
+    cleaned_text = re.sub(r'[ \t]+', ' ', resume_text.strip())
+    cleaned_text = re.sub(r'\n{3,}', '\n\n', cleaned_text)[:7000]
 
-Return ONLY a valid JSON object with this exact structure:
+    # Pre-extract skills using dictionary scanner to ensure zero missed skills
+    lower_text = " " + resume_text.lower() + " "
+    scanned_skills = []
+    seen_scan = set()
+    for sk in KNOWN_SKILLS_LIST:
+        pattern = r'(?<![a-zA-Z0-9#+])' + re.escape(sk.lower()) + r'(?![a-zA-Z0-9#+])'
+        if re.search(pattern, lower_text):
+            if sk.lower() not in seen_scan:
+                seen_scan.add(sk.lower())
+                scanned_skills.append(sk)
+
+    prompt = f"""You are an elite, highly thorough ATS resume parser.
+First, verify whether this document is a genuine candidate resume. If not (e.g. essay, receipt, invoice, transcript/marksheet, code snippet, article), set "is_valid_resume": false.
+
+CRITICAL SKILLS INSTRUCTION:
+- Extract EVERY SINGLE technical and professional skill mentioned in the resume (aim for ALL 20-40+ distinct skills: languages, frameworks, libraries, tools, databases, cloud, devops, methodologies). DO NOT truncate or summarize skills.
+
+Required Output Schema (JSON):
 {{
-  "full_name": "Candidate Full Name (or empty string if not found)",
-  "current_title": "Primary/Latest Job Title",
-  "target_title": "Suggested Next Career Step / Target Job Title",
-  "experience_years": <estimated total years of experience as integer>,
-  "location": "City, State or Country (e.g., San Francisco, CA)",
-  "phone": "Phone number if present",
-  "bio": "A compelling 3-5 sentence professional bio/summary based on their actual experience, skills, and background mentioned in the resume",
-  "linkedin_url": "https://linkedin.com/in/... (if present, else empty string)",
-  "github_url": "https://github.com/... (if present, else empty string)",
-  "portfolio_url": "https://... (personal site/portfolio if present, else empty string)",
-  "skills": ["skill1", "skill2", ...],
-  "roles": ["role1", "role2", ...],
+  "is_valid_resume": true,
+  "full_name": "Full Name",
+  "current_title": "Primary Title",
+  "target_title": "Target Role",
+  "experience_years": 3,
+  "location": "City, Country",
+  "phone": "Phone",
+  "email": "Email",
+  "bio": "2-sentence professional bio",
+  "summary": "2-sentence executive summary",
+  "linkedin_url": "",
+  "github_url": "",
+  "portfolio_url": "",
+  "skills": ["Skill1", "Skill2", "Skill3", "Skill4", "Skill5", "Skill6", "Skill7", "Skill8"],
+  "roles": ["Role1", "Role2"],
   "experience": [
-    {{"company": "Company Name", "title": "Job Title", "duration": "Jan 2020 - Dec 2022", "description": "brief description"}}
+    {{"role": "Title", "company": "Company", "duration": "2021-2023", "description": "Key impact and responsibilities"}}
   ],
   "education": [
-    {{"institution": "University Name", "degree": "Degree", "year": "2020"}}
+    {{"degree": "Degree Major", "institution": "University", "year": "2021", "gpa_or_grade": ""}}
   ],
-  "education_summary": "Highest degree and institution (e.g., BS in Computer Science, State University, 2020)",
-  "certifications": ["AWS Certified Solutions Architect", "PMP Certification", ...],
-  "courses": ["Deep Learning Specialization – Coursera", "Full Stack Web Development – Udemy", ...],
-  "languages": ["English", "Spanish", ...],
-  "achievements": "Key achievements, honors, or awards mentioned in the resume",
-  "summary": "Full professional summary based on the resume"
+  "education_summary": "Degree, Institution, Year",
+  "certifications": [
+    {{"name": "Cert Title", "issuer": "Issuer", "year": "2022"}}
+  ],
+  "courses": [
+    {{"title": "Course Title", "platform": "Coursera/Udemy", "skills_covered": ["Skill"]}}
+  ],
+  "projects": [
+    {{"name": "Project Title", "description": "Overview and impact", "technologies": ["Tech1", "Tech2"], "link": ""}}
+  ]
 }}
 
-Rules:
-- Extract real URLs for linkedin_url, github_url, and portfolio_url if present in text.
-- "skills": ALL technical skills, tools, programming languages, frameworks, libraries, databases, cloud platforms, DevOps tools, architecture concepts, methodologies, and soft skills mentioned anywhere in the resume. Extract EVERY SINGLE skill found — do NOT summarize, omit, or limit the list; return all 30+ skills if present.
-- "bio": Create a rich, comprehensive 3-5 sentence professional summary based directly on the resume's text, experience bullets, and skills.
-- "certifications": industry certifications.
-- "courses": online courses, training bootcamps.
-- If a section or field has no items, return empty array [] or empty string "".
-
-Resume Text:
+Resume:
 \"\"\"
-{resume_text[:12000]}
+{cleaned_text}
 \"\"\"
 """
     try:
@@ -331,164 +403,130 @@ Resume Text:
             json_mode=True,
             feature="Resume Parser"
         )
-        return _extract_json(raw)
+        parsed = _extract_json(raw)
+        if isinstance(parsed, dict) and parsed.get("is_valid_resume") is False:
+            raise ValueError("The uploaded document was analyzed and determined not to be a valid candidate resume.")
+        
+        # Merge LLM-extracted skills with dictionary-scanned skills for complete coverage
+        llm_skills = parsed.get("skills", []) if isinstance(parsed.get("skills"), list) else []
+        combined_skills = []
+        seen = set()
+        for s in llm_skills + scanned_skills:
+            clean_s = str(s).strip()
+            if clean_s and clean_s.lower() not in seen:
+                seen.add(clean_s.lower())
+                combined_skills.append(clean_s)
+        
+        parsed["skills"] = combined_skills
+        return parsed
     except Exception as e:
-        import logging
-        logging.error(f"AI parse_resume failed: {e}. Executing NLP rule-based parser fallback.")
-        return _python_rule_based_resume_parser(resume_text)
+        logging.error(f"AI parse_resume failed: {e}")
+        raise ValueError(f"AI resume parser error: {str(e)}")
 
 
 async def analyze_ats_and_gaps(resume_text: str, parsed_skills: list) -> Dict[str, Any]:
     """
     ATS score calculation and skill gap analysis.
-    Returns: ats_score (0-100), skill_gaps, recommendations.
+    Considers full skill set for thorough ATS evaluation.
     """
     skills_str = ", ".join(parsed_skills) if parsed_skills else "none provided"
-    prompt = f"""You are a professional ATS (Applicant Tracking System) and career coach AI.
+    cleaned_excerpt = re.sub(r'\s+', ' ', resume_text[:3000]).strip()
+    
+    prompt = f"""You are a professional ATS and career coach AI.
+Analyze candidate resume excerpt and skills against industry benchmarks.
 
-Analyze this resume and the candidate's current skills against modern industry benchmarks.
+Candidate Skills ({len(parsed_skills)}): {skills_str}
+Resume Excerpt: {cleaned_excerpt}
 
-Candidate Skills: {skills_str}
-
-Resume Text (first 3000 chars):
-\"\"\"
-{resume_text[:3000]}
-\"\"\"
-
-Return ONLY a valid JSON object with this exact structure:
+Return ONLY valid JSON:
 {{
-  "ats_score": <integer 0-100>,
-  "ats_breakdown": {{
-    "keywords": <0-25>,
-    "formatting": <0-25>,
-    "experience_relevance": <0-25>,
-    "skills_match": <0-25>
-  }},
-  "skill_gaps": [
-    {{"skill": "skill name", "priority": "high|medium|low", "reason": "why this skill matters"}}
-  ],
-  "strengths": ["strength1", "strength2"],
-  "recommendations": ["recommendation1", "recommendation2", "recommendation3"]
+  "ats_score": 85,
+  "ats_breakdown": {{"keywords": 22, "formatting": 20, "experience_relevance": 22, "skills_match": 21}},
+  "skill_gaps": [{{"skill": "Skill name", "priority": "high|medium|low", "reason": "why needed"}}],
+  "strengths": ["Strength 1", "Strength 2"],
+  "recommendations": ["Recommendation 1", "Recommendation 2"]
 }}
 """
     try:
         raw = await _chat_completion(
             [{"role": "user", "content": prompt}],
             json_mode=True,
+            feature="ATS & Gap Analysis"
         )
         return _extract_json(raw)
     except Exception as e:
-        import logging
         logging.error(f"AI analyze_ats_and_gaps failed: {e}")
-        return {
-            "ats_score": 75,
-            "ats_breakdown": {"keywords": 20, "formatting": 20, "experience_relevance": 20, "skills_match": 15},
-            "skill_gaps": [
-                {"skill": "Cloud Architecture", "priority": "high", "reason": "High demand in modern full-stack roles"},
-                {"skill": "CI/CD", "priority": "medium", "reason": "Essential for deployment pipelines"}
-            ],
-            "strengths": ["Strong foundational programming skills", "Good experience timeline"],
-            "recommendations": ["Add more metrics to your achievements", "Include a link to your portfolio"]
-        }
+        raise ValueError(f"AI service is currently unavailable for ATS and Skill Gap analysis. ({str(e)})")
 
 
 async def predict_career_paths(parsed_skills: list, current_roles: list, experience_summary: str) -> Dict[str, Any]:
-    """Predict logical next career paths based on user's profile."""
+    """Predict logical next career paths based on candidate's complete profile."""
+    roles_str = ', '.join(current_roles[:5]) if current_roles else 'Software Professional'
+    skills_str = ', '.join(parsed_skills) if parsed_skills else 'General technical background'
+    
     prompt = f"""You are an expert career advisor AI.
+Candidate:
+- Roles: {roles_str}
+- All Candidate Skills: {skills_str}
+- Summary: {experience_summary[:350] if experience_summary else 'Technical background'}
 
-Based on the candidate's profile:
-- Current/Past Roles: {', '.join(current_roles) if current_roles else 'Not specified'}
-- Skills: {', '.join(parsed_skills) if parsed_skills else 'Not specified'}
-- Experience Summary: {experience_summary[:500] if experience_summary else 'Not provided'}
-
-Return ONLY a valid JSON object with this exact structure:
+Predict top 3 next career progression paths.
+Return ONLY valid JSON:
 {{
   "career_paths": [
     {{
-      "title": "Career Path Title",
-      "match_percentage": <0-100>,
-      "description": "Brief description of this career path",
+      "title": "Target Title",
+      "match_percentage": 88,
+      "description": "2-sentence fit description",
       "required_skills": ["skill1", "skill2"],
-      "timeline": "Expected timeline to transition",
-      "avg_salary": "$XX,000 - $XX,000"
+      "timeline": "6-12 months",
+      "avg_salary": "$110k - $140k"
     }}
   ],
   "recommended_next_roles": ["Role 1", "Role 2", "Role 3"]
 }}
-
-Provide 3-4 realistic career paths.
 """
     try:
         raw = await _chat_completion(
             [{"role": "user", "content": prompt}],
             json_mode=True,
+            feature="Career Path Prediction"
         )
         return _extract_json(raw)
     except Exception as e:
-        import logging
         logging.error(f"AI predict_career_paths failed: {e}")
-        return {
-            "career_paths": [
-                {
-                    "title": "Senior Software Engineer",
-                    "match_percentage": 85,
-                    "description": "Lead development teams and architect complex systems.",
-                    "required_skills": ["System Design", "Leadership", "Cloud Architecture"],
-                    "timeline": "1-2 years",
-                    "avg_salary": "$120,000 - $160,000"
-                },
-                {
-                    "title": "Technical Product Manager",
-                    "match_percentage": 70,
-                    "description": "Bridge the gap between engineering and product strategy.",
-                    "required_skills": ["Agile", "Product Strategy", "Communication"],
-                    "timeline": "2-3 years",
-                    "avg_salary": "$110,000 - $150,000"
-                }
-            ],
-            "recommended_next_roles": ["Senior Developer", "Engineering Manager"]
-        }
+        raise ValueError(f"AI service is currently unavailable for career path predictions. ({str(e)})")
 
 
 async def predict_salary(job_title: str, skills: list, experience_years: int, location: Optional[str] = None) -> Dict[str, Any]:
-    """Estimate salary range for given role + skills + experience."""
-    prompt = f"""You are a compensation and salary benchmarking expert.
-
-Estimate the salary range for a candidate with these details:
-- Target Job Title: {job_title}
+    """Estimate salary range for given role + all candidate skills + experience."""
+    prompt = f"""Estimate salary benchmark for:
+- Role: {job_title}
 - Skills: {', '.join(skills) if skills else 'General'}
-- Years of Experience: {experience_years}
-- Location: {location or 'Global/Remote'}
+- Years: {experience_years}
+- Location: {location or 'Remote / Open'}
 
-Return ONLY a valid JSON object with this exact structure:
+Return ONLY valid JSON:
 {{
-  "min_salary": <integer in USD>,
-  "max_salary": <integer in USD>,
-  "median_salary": <integer in USD>,
+  "min_salary": 95000,
+  "max_salary": 145000,
+  "median_salary": 120000,
   "currency": "USD",
-  "factors": ["factor1", "factor2"],
-  "market_demand": "high|medium|low",
-  "negotiation_tips": ["tip1", "tip2"]
+  "factors": ["Experience level", "Skill specialization"],
+  "market_demand": "high",
+  "negotiation_tips": ["Highlight recent achievements", "Reference industry benchmarks"]
 }}
 """
     try:
         raw = await _chat_completion(
             [{"role": "user", "content": prompt}],
             json_mode=True,
+            feature="Salary Predictor"
         )
         return _extract_json(raw)
     except Exception as e:
-        import logging
         logging.error(f"AI predict_salary failed: {e}")
-        return {
-            "min_salary": 90000, 
-            "max_salary": 140000, 
-            "median_salary": 115000,
-            "currency": "USD", 
-            "factors": ["Location", "Years of experience", "Tech stack demand"], 
-            "market_demand": "high", 
-            "negotiation_tips": ["Highlight recent high-impact projects", "Discuss equity options"]
-        }
+        raise ValueError(f"AI service is currently unavailable for salary benchmarking. ({str(e)})")
 
 
 async def career_chat(user_message: str, user_context: Optional[str] = None) -> str:
@@ -528,11 +566,12 @@ RESPONSE FORMATTING RULES FOR CAREER QUERIES:
     messages.append({"role": "user", "content": user_message})
 
     try:
-        return await _chat_completion(messages)
+        return await _chat_completion(messages, feature="Career Chatbot")
     except ValueError as e:
-        return f"{e}"
+        raise ValueError(f"AI service unavailable: {e}")
     except Exception as e:
-        return f"I'm having trouble connecting right now. Please try again shortly. (Error: {str(e)[:150]})"
+        logging.error(f"AI career_chat failed: {e}")
+        raise ValueError(f"AI service is currently unavailable. Please try again shortly. ({str(e)})")
 
 
 def _build_job_url(title: str, company: str) -> str:
@@ -604,6 +643,7 @@ Rules:
         raw = await _chat_completion(
             [{"role": "user", "content": prompt}],
             json_mode=True,
+            feature="Job Recommender"
         )
         data = _extract_json(raw)
         jobs = data if isinstance(data, list) else data.get("jobs", [])
@@ -612,96 +652,8 @@ Rules:
                 j["job_url"] = _build_job_url(j.get("title", "Software"), j.get("company", ""))
         return jobs
     except Exception as e:
-        import logging
         logging.error(f"AI generate_job_recommendations failed: {e}")
-        
-        # Dynamic fallback based on candidate's actual role/skills
-        primary_role = (target_roles[0] if target_roles else (target_title or current_title or "Software Engineer")).title()
-        s1 = parsed_skills[0] if parsed_skills else "Python"
-        s2 = parsed_skills[1] if len(parsed_skills) > 1 else "React"
-        s3 = parsed_skills[2] if len(parsed_skills) > 2 else "Cloud Architecture"
-        s4 = parsed_skills[3] if len(parsed_skills) > 3 else "PostgreSQL"
-
-        return [
-            {
-                "title": f"Senior {primary_role}",
-                "company": "CloudTech Solutions",
-                "location": "Remote",
-                "description": f"Lead engineering initiatives utilizing {s1} and {s2}. Architect scalable solutions and mentor junior team members.",
-                "required_skills": [s1, s2, s3, "System Design"],
-                "salary_min": 125000,
-                "salary_max": 160000,
-                "job_type": "Remote",
-                "experience_level": "Senior",
-                "match_score": 94,
-                "job_url": _build_job_url(f"Senior {primary_role}", "CloudTech Solutions")
-            },
-            {
-                "title": f"{primary_role} Lead",
-                "company": "DataSphere Systems",
-                "location": "Hybrid (San Francisco, CA)",
-                "description": f"Drive key technical projects using {s1} and modern software frameworks. Build resilient pipelines and infrastructure.",
-                "required_skills": [s1, s3, "Agile", "DevOps"],
-                "salary_min": 115000,
-                "salary_max": 150000,
-                "job_type": "Hybrid",
-                "experience_level": "Mid-Senior",
-                "match_score": 91,
-                "job_url": _build_job_url(f"{primary_role} Lead", "DataSphere Systems")
-            },
-            {
-                "title": f"Staff {primary_role}",
-                "company": "NextGen Innovations",
-                "location": "New York, NY",
-                "description": f"Architect enterprise-grade systems with {s2} and {s3}. Collaborate with cross-functional product teams.",
-                "required_skills": [s2, s3, "CI/CD", "REST APIs"],
-                "salary_min": 140000,
-                "salary_max": 185000,
-                "job_type": "Full-time",
-                "experience_level": "Senior",
-                "match_score": 88,
-                "job_url": _build_job_url(f"Staff {primary_role}", "NextGen Innovations")
-            },
-            {
-                "title": f"Principal {primary_role} Engineer",
-                "company": "Stripe Technologies",
-                "location": "Remote",
-                "description": f"Spearhead core backend and frontend platform scaling using {s1}, {s3}, and {s4}.",
-                "required_skills": [s1, s4, "Microservices", "Docker"],
-                "salary_min": 155000,
-                "salary_max": 195000,
-                "job_type": "Remote",
-                "experience_level": "Lead",
-                "match_score": 85,
-                "job_url": _build_job_url(f"Principal {primary_role}", "Stripe")
-            },
-            {
-                "title": f"{primary_role} - Full Stack Focus",
-                "company": "Vercel / Next Technologies",
-                "location": "Remote / Open",
-                "description": f"Build high-throughput web applications leveraging {s2} and cloud microservices.",
-                "required_skills": [s2, s1, "GraphQL", "TailwindCSS"],
-                "salary_min": 105000,
-                "salary_max": 145000,
-                "job_type": "Full-time",
-                "experience_level": "Mid-Level",
-                "match_score": 82,
-                "job_url": _build_job_url(f"{primary_role}", "Vercel")
-            },
-            {
-                "title": f"Lead {primary_role} Architect",
-                "company": "Databricks AI Labs",
-                "location": "Seattle, WA",
-                "description": f"Design next-generation AI platform services using {s1}, {s3}, and modern cloud stacks.",
-                "required_skills": [s1, s3, "AWS", "Kubernetes"],
-                "salary_min": 160000,
-                "salary_max": 210000,
-                "job_type": "Hybrid",
-                "experience_level": "Lead",
-                "match_score": 80,
-                "job_url": _build_job_url(f"Lead {primary_role}", "Databricks")
-            }
-        ]
+        raise ValueError(f"AI service is currently unavailable for generating job recommendations. ({str(e)})")
 
 
 async def generate_course_recommendations(
@@ -746,6 +698,7 @@ Rules:
         raw = await _chat_completion(
             [{"role": "user", "content": prompt}],
             json_mode=True,
+            feature="Course Recommender"
         )
         data = _extract_json(raw)
         courses = data if isinstance(data, list) else data.get("courses", [])
@@ -754,88 +707,8 @@ Rules:
                 c["url"] = _build_course_url(c.get("title", "Course"), c.get("provider", "Coursera"))
         return courses
     except Exception as e:
-        import logging
         logging.error(f"AI generate_course_recommendations failed: {e}")
-        
-        target_gap = gap_skills[0] if gap_skills else "Cloud Architecture"
-        second_gap = gap_skills[1] if len(gap_skills) > 1 else "CI/CD & DevOps"
-        third_gap = gap_skills[2] if len(gap_skills) > 2 else "System Design"
-        fourth_gap = gap_skills[3] if len(gap_skills) > 3 else "Microservices"
-
-        return [
-            {
-                "title": f"Mastering {target_gap}: From Fundamentals to Production",
-                "provider": "Coursera",
-                "description": f"Comprehensive specialization covering {target_gap} patterns, practical exercises, and industry best practices.",
-                "skills_covered": [target_gap, "System Architecture", "Best Practices"],
-                "duration": "6 weeks",
-                "level": "Intermediate",
-                "is_free": False,
-                "rating": "4.9",
-                "url": _build_course_url(f"Mastering {target_gap}", "Coursera"),
-                "match_score": 96
-            },
-            {
-                "title": f"{second_gap} Bootcamp & Hands-on Projects",
-                "provider": "Udemy",
-                "description": f"Master {second_gap} with real-world project workflows and step-by-step guidance.",
-                "skills_covered": [second_gap, "Automation", "Deployment"],
-                "duration": "14 hours",
-                "level": "Intermediate",
-                "is_free": False,
-                "rating": "4.7",
-                "url": _build_course_url(f"{second_gap} Bootcamp", "Udemy"),
-                "match_score": 92
-            },
-            {
-                "title": f"Free Crash Course: {target_gap} in 2026",
-                "provider": "YouTube",
-                "description": f"Full-length video tutorial breaking down key concepts of {target_gap} for developers.",
-                "skills_covered": [target_gap, "Hands-on Guide"],
-                "duration": "4 hours",
-                "level": "Beginner to Intermediate",
-                "is_free": True,
-                "rating": "4.8",
-                "url": _build_course_url(f"{target_gap} tutorial", "YouTube"),
-                "match_score": 88
-            },
-            {
-                "title": f"{third_gap} Microservices & Scalable Systems",
-                "provider": "edX",
-                "description": f"Professional certificate program in {third_gap} designed by top university faculty.",
-                "skills_covered": [third_gap, "Distributed Systems", "Scalability"],
-                "duration": "8 weeks",
-                "level": "Advanced",
-                "is_free": False,
-                "rating": "4.8",
-                "url": _build_course_url(f"{third_gap} Professional Certificate", "edX"),
-                "match_score": 85
-            },
-            {
-                "title": f"Interactive {fourth_gap} Learning Path & Coding Drills",
-                "provider": "freeCodeCamp",
-                "description": f"Free self-paced curriculum building real-world projects with {fourth_gap}.",
-                "skills_covered": [fourth_gap, "Open Source", "Project Portfolio"],
-                "duration": "20 hours",
-                "level": "Intermediate",
-                "is_free": True,
-                "rating": "4.9",
-                "url": _build_course_url(f"{fourth_gap} curriculum", "freecodecamp"),
-                "match_score": 83
-            },
-            {
-                "title": f"Executive {target_gap} & Engineering Leadership",
-                "provider": "Coursera",
-                "description": f"Learn executive-level patterns for {target_gap} and leading high-performing engineering teams.",
-                "skills_covered": [target_gap, "Engineering Leadership", "Tech Strategy"],
-                "duration": "5 weeks",
-                "level": "Advanced",
-                "is_free": False,
-                "rating": "4.7",
-                "url": _build_course_url(f"{target_gap} Leadership", "Coursera"),
-                "match_score": 80
-            }
-        ]
+        raise ValueError(f"AI service is currently unavailable for generating course recommendations. ({str(e)})")
 
 
 async def compare_resume_with_jd(
@@ -889,38 +762,12 @@ Return ONLY a valid JSON object with this exact structure:
         raw = await _chat_completion(
             [{"role": "user", "content": prompt}],
             json_mode=True,
+            feature="Resume vs JD Matcher"
         )
         return _extract_json(raw)
     except Exception as e:
-        import logging
         logging.error(f"AI compare_resume_with_jd failed: {e}")
-        jd_words = list(set(re.findall(r'\b[a-zA-Z]{3,}\b', job_description.lower())))
-        res_words = set(re.findall(r'\b[a-zA-Z]{3,}\b', resume_text.lower()))
-        matched = [s for s in parsed_skills if s.lower() in job_description.lower()]
-        
-        calc_score = min(95, max(45, int((len(res_words & set(jd_words)) / max(len(jd_words), 1)) * 100 + 30)))
-        
-        return {
-            "match_score": calc_score,
-            "ats_breakdown": {
-                "keyword_matching": min(25, int(calc_score * 0.25)),
-                "skills_alignment": min(25, int(calc_score * 0.25)),
-                "experience_relevance": min(25, int(calc_score * 0.25)),
-                "education_and_formatting": 20
-            },
-            "extracted_jd_skills": jd_words[:10],
-            "matching_skills": matched if matched else parsed_skills[:3],
-            "missing_skills": ["Cloud Architecture", "System Design", "CI/CD"],
-            "skill_gap_analysis": [
-                {"skill": "Cloud Architecture", "importance": "critical", "reason": "Key requirement in the job description"},
-                {"skill": "CI/CD Pipelines", "importance": "recommended", "reason": "Mentioned under engineering practices"}
-            ],
-            "strengths": ["Strong foundational background", "Relevant skill alignment"],
-            "resume_improvements": [
-                "Incorporate exact keywords from the job description into your experience bullet points.",
-                "Quantify achievements with metrics and percentages to demonstrate impact."
-            ]
-        }
+        raise ValueError(f"AI service is currently unavailable for resume vs job description comparison. ({str(e)})")
 
 
 async def generate_resume_improvements(resume_text: str, target_role: str = "") -> Dict[str, Any]:
@@ -961,35 +808,12 @@ Return ONLY a valid JSON object with this exact structure:
         raw = await _chat_completion(
             [{"role": "user", "content": prompt}],
             json_mode=True,
+            feature="Resume Improvements"
         )
         return _extract_json(raw)
     except Exception as e:
-        import logging
         logging.error(f"AI generate_resume_improvements failed: {e}")
-        return {
-            "improved_summaries": [
-                {
-                    "style": "Impact & Technical",
-                    "text": "Results-driven software engineer with expertise in building scalable web applications and cloud services. Proven track record of improving system performance and delivering high-quality user experiences."
-                }
-            ],
-            "missing_keywords": ["System Design", "Cloud Native", "CI/CD", "Agile/Scrum", "Microservices"],
-            "project_improvements": [
-                {
-                    "original_concept": "Developed web applications and backend APIs.",
-                    "improved_bullet": "Engineered responsive full-stack web applications using React and FastAPI, reducing API latency by 40% across 50k+ active users."
-                }
-            ],
-            "recommended_certifications": [
-                {"name": "AWS Certified Solutions Architect – Associate", "provider": "Amazon Web Services", "impact": "Boosts cloud credentials significantly"},
-                {"name": "Certified Kubernetes Administrator (CKA)", "provider": "CNCF", "impact": "High demand for cloud-native roles"}
-            ],
-            "general_tips": [
-                "Use quantifiable metrics (e.g., %, $, time saved) in every project bullet point.",
-                "Ensure consistent formatting with clear section headings.",
-                "Tailor keywords directly to target job postings to pass ATS filters."
-            ]
-        }
+        raise ValueError(f"AI service is currently unavailable for generating resume improvements. ({str(e)})")
 
 
 async def generate_learning_path(skill_gaps: list, target_role: str = "") -> Dict[str, Any]:
@@ -1044,44 +868,12 @@ Return ONLY a valid JSON object with this exact structure:
         raw = await _chat_completion(
             [{"role": "user", "content": prompt}],
             json_mode=True,
+            feature="Learning Path Generator"
         )
         return _extract_json(raw)
     except Exception as e:
-        import logging
         logging.error(f"AI generate_learning_path failed: {e}")
-        return {
-            "roadmap_title": f"Learning Roadmap: {target_role or 'Career Acceleration'}",
-            "estimated_total_time": "3 months",
-            "phases": [
-                {
-                    "phase_number": 1,
-                    "phase_name": "Phase 1: Fundamentals & Core Concepts",
-                    "duration": "3 weeks",
-                    "focus_skills": gap_skills[:2] if gap_skills else ["Foundations"],
-                    "objectives": "Build solid theoretical understanding and setup development environment.",
-                    "action_items": ["Complete introductory online tutorials", "Build 2 hands-on exercise scripts"],
-                    "recommended_resource": "Coursera & YouTube Deep Dives"
-                },
-                {
-                    "phase_number": 2,
-                    "phase_name": "Phase 2: Advanced Application",
-                    "duration": "5 weeks",
-                    "focus_skills": gap_skills[2:4] if len(gap_skills) > 2 else ["Architecture"],
-                    "objectives": "Apply core concepts to real-world software architecture and pipelines.",
-                    "action_items": ["Develop end-to-end prototype project", "Implement automated unit & integration tests"],
-                    "recommended_resource": "Udemy Hands-On Masterclass"
-                },
-                {
-                    "phase_number": 3,
-                    "phase_name": "Phase 3: Production Deployment & Certifications",
-                    "duration": "4 weeks",
-                    "focus_skills": ["Cloud Deployment", "CI/CD"],
-                    "objectives": "Deploy production app with monitoring, CI/CD, and earn industry recognition.",
-                    "action_items": ["Publish open-source repository on GitHub", "Obtain official certification"],
-                    "recommended_resource": "AWS / Cloud Certification Prep"
-                }
-            ]
-        }
+        raise ValueError(f"AI service is currently unavailable for generating learning paths. ({str(e)})")
 
 
 async def generate_interview_questions(
@@ -1150,106 +942,11 @@ Generate 3 TECHNICAL questions, 3 BEHAVIORAL questions, and 3 GENERAL questions 
         raw = await _chat_completion(
             [{"role": "user", "content": prompt}],
             json_mode=True,
+            feature="Interview Prep Generator"
         )
         return _extract_json(raw)
     except Exception as e:
-        import logging
         logging.error(f"AI generate_interview_questions failed: {e}")
-        return {
-            "job_role": target_role or roles_str or "Software Engineer",
-            "total_questions": 9,
-            "questions": [
-                {
-                    "id": 1,
-                    "category": "technical",
-                    "question": f"How would you design a scalable microservices backend using {skills[0] if skills else 'Python/Node'} and relational databases?",
-                    "difficulty": "Hard",
-                    "sample_answer": f"I would design the system with stateless microservices using {skills[0] if skills else 'Python/Node'} for business logic, placing them behind an NGINX or AWS API Gateway. Data storage is handled by PostgreSQL with read-replicas, connection pooling, and Redis for caching frequent queries. Long-running tasks run asynchronously using worker queues.",
-                    "answer_hint": "Discuss RESTful standards, caching layers (Redis), connection pooling, and automated error handling.",
-                    "key_points": ["API Gateway", "Database indexing", "Caching layer"],
-                    "star_approach": None
-                },
-                {
-                    "id": 2,
-                    "category": "technical",
-                    "question": "What strategies do you use for performance optimization in modern web applications?",
-                    "difficulty": "Medium",
-                    "sample_answer": "I optimize web performance on multiple fronts: on the frontend, I implement code splitting, lazy loading, image optimization, and state memoization. On the backend, I reduce payload sizes with gzip/brotli compression, optimize SQL queries, and leverage CDN caching for static assets.",
-                    "answer_hint": "Explain code splitting, asset compression, lazy loading components, and avoiding unnecessary re-renders.",
-                    "key_points": ["Code splitting", "CDN Caching", "Virtual DOM optimization"],
-                    "star_approach": None
-                },
-                {
-                    "id": 3,
-                    "category": "technical",
-                    "question": "Explain how you set up automated CI/CD deployment pipelines and maintain high code quality.",
-                    "difficulty": "Medium",
-                    "sample_answer": "I configure GitHub Actions workflows that automatically run linter checks, unit tests, and integration test suites on every pull request. Once merged to main, Docker images are built and pushed to a container registry, followed by automated staging deployment and zero-downtime production rollouts.",
-                    "answer_hint": "Cover automated unit/integration testing in GitHub Actions, Docker containerization, and staging environments.",
-                    "key_points": ["Docker build", "Automated testing", "Zero-downtime deployment"],
-                    "star_approach": None
-                },
-                {
-                    "id": 4,
-                    "category": "behavioral",
-                    "question": "Describe a project where you faced tight deadlines or conflicting priorities. How did you manage your workload?",
-                    "difficulty": "Medium",
-                    "sample_answer": "During a high-stakes product release, we faced conflicting feature requests. I collaborated with the product manager to prioritize MVP requirements based on user impact. I deferred non-critical enhancements, broken down tasks into 1-day deliverables, and kept stakeholders informed with daily async updates, successfully launching on schedule.",
-                    "answer_hint": "Outline the timeline, how you triaged tasks, communicated with stakeholders, and delivered.",
-                    "key_points": ["Task triage", "Stakeholder communication", "On-time delivery"],
-                    "star_approach": "Situation: Tight product release date; Task: Deliver core MVP; Action: Prioritized high-impact APIs and triaged backlog; Result: Launched feature on time without downtime."
-                },
-                {
-                    "id": 5,
-                    "category": "behavioral",
-                    "question": "Tell me about a technical disagreement you had with a teammate. How did you reach a consensus?",
-                    "difficulty": "Hard",
-                    "sample_answer": "When choosing between PostgreSQL and MongoDB for a new service, my teammate preferred Mongo while I favored Postgres for structured relationships. Instead of debating theoretically, we built quick benchmarks measuring latency and data integrity. The metrics proved Postgres suited our relational needs better, and my teammate appreciated the objective approach.",
-                    "answer_hint": "Focus on data-backed discussions, benchmarking alternatives, listening to perspectives, and putting project success first.",
-                    "key_points": ["Constructive dialogue", "Data-driven decisions", "Team cohesion"],
-                    "star_approach": "Situation: DB choice debate; Task: Agree on optimal DB; Action: Built micro-benchmark POCs; Result: Selected Postgres based on clear performance data."
-                },
-                {
-                    "id": 6,
-                    "category": "behavioral",
-                    "question": "Give an example of a time you took initiative to improve a system or process without being asked.",
-                    "difficulty": "Medium",
-                    "sample_answer": "I noticed our build pipeline was taking over 15 minutes due to un-cached dependencies. I invested a few hours refactoring the Dockerfile and caching node_modules in GitHub Actions. This cut our CI build time down to 4 minutes, saving developers over 10 cumulative hours every week.",
-                    "answer_hint": "Detail how you identified a bottleneck or technical debt, proposed a refactor, and measured the positive impact.",
-                    "key_points": ["Proactive mindset", "Refactoring", "Quantifiable improvement"],
-                    "star_approach": "Situation: 15-minute CI build bottleneck; Task: Speed up build process; Action: Implemented dependency caching; Result: Reduced build time to 4 minutes."
-                },
-                {
-                    "id": 7,
-                    "category": "general",
-                    "question": f"Why are you interested in pursuing a {target_role or 'Software Engineer'} role with our company?",
-                    "difficulty": "Easy",
-                    "sample_answer": f"I am deeply inspired by your team's innovative work in building scalable applications. As a {target_role or 'Software Engineer'}, I am eager to apply my technical background to help scale your core platform, solve challenging engineering problems, and contribute to an engineering culture focused on excellence.",
-                    "answer_hint": "Express genuine enthusiasm for the company's product, tech stack, culture, and growth opportunities.",
-                    "key_points": ["Company alignment", "Passion for product", "Long-term ambition"],
-                    "star_approach": None
-                },
-                {
-                    "id": 8,
-                    "category": "general",
-                    "question": "What is a recent technical skill or tool you learned independently, and how did you apply it?",
-                    "difficulty": "Easy",
-                    "sample_answer": "Recently, I independently learned Docker and container orchestration to streamline deployment environments. I containerized a multi-service web project, which eliminated environment mismatch issues between development and production.",
-                    "answer_hint": "Highlight self-driven learning, curiosity, and practical implementation in a personal or team project.",
-                    "key_points": ["Continuous learning", "Self-motivation", "Practical application"],
-                    "star_approach": None
-                },
-                {
-                    "id": 9,
-                    "category": "general",
-                    "question": "Where do you see your technical career evolving over the next 2-3 years?",
-                    "difficulty": "Easy",
-                    "sample_answer": "Over the next 2-3 years, I aim to deepen my expertise in distributed systems architecture, take on greater technical ownership of complex features, and mentor junior developers while driving high-quality product releases.",
-                    "answer_hint": "Emphasize mastering your current domain, taking on greater technical leadership, and driving impactful products.",
-                    "key_points": ["Technical growth", "Leadership goals", "Domain mastery"],
-                    "star_approach": None
-                }
-            ]
-        }
+        raise ValueError(f"AI service is currently unavailable for generating interview questions. ({str(e)})")
 
 

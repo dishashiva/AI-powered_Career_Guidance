@@ -144,6 +144,7 @@ export default function AdminDashboardPage() {
   const [announcements, setAnnouncements] = useState([]);
   const [annModal, setAnnModal] = useState(null);
   const [savingAnn, setSavingAnn] = useState(false);
+  const [loadingAnnouncementsState, setLoadingAnnouncementsState] = useState(false);
 
   // ─── Fetch Stats ──────────────────────────────────────────────
   const fetchStats = useCallback(async () => {
@@ -319,12 +320,15 @@ export default function AdminDashboardPage() {
   };
 
   const loadAnnouncements = async () => {
+    setLoadingAnnouncementsState(true);
     try {
       const res = await adminAPI.listAnnouncements();
       setAnnouncements(Array.isArray(res.data) ? res.data : []);
     } catch (err) {
       console.error('Failed to load announcements:', err);
       toast.error('Failed to load announcements');
+    } finally {
+      setLoadingAnnouncementsState(false);
     }
   };
 
@@ -334,39 +338,41 @@ export default function AdminDashboardPage() {
       toast.error('Please enter both title and message for the announcement');
       return;
     }
+    const currentModalData = { ...annModal };
+    const payload = {
+      title: currentModalData.title.trim(),
+      message: currentModalData.message.trim(),
+      type: currentModalData.type || 'info',
+      is_active: currentModalData.is_active ?? true,
+    };
+    const isEdit = !!currentModalData.id;
+    const editingId = currentModalData.id;
+
+    // Immediately close modal
+    setAnnModal(null);
     setSavingAnn(true);
+
     try {
-      if (annModal.id) {
-        const res = await adminAPI.updateAnnouncement(annModal.id, {
-          title: annModal.title.trim(),
-          message: annModal.message.trim(),
-          type: annModal.type || 'info',
-          is_active: annModal.is_active ?? true,
-        });
+      if (isEdit) {
+        const res = await adminAPI.updateAnnouncement(editingId, payload);
+        const updatedItem = res?.data || { id: editingId, ...payload, created_at: new Date().toISOString() };
+        setAnnouncements((prev) =>
+          prev.map((a) => (a.id === editingId ? { ...a, ...updatedItem } : a))
+        );
         toast.success('Announcement updated successfully!');
-        if (res.data) {
-          setAnnouncements((prev) =>
-            prev.map((a) => (a.id === annModal.id ? res.data : a))
-          );
-        }
       } else {
-        const res = await adminAPI.createAnnouncement({
-          title: annModal.title.trim(),
-          message: annModal.message.trim(),
-          type: annModal.type || 'info',
-          is_active: annModal.is_active ?? true,
-        });
+        const res = await adminAPI.createAnnouncement(payload);
+        const newItem = res?.data || { id: Date.now(), ...payload, created_at: new Date().toISOString() };
+        setAnnouncements((prev) => [newItem, ...prev]);
         toast.success('Announcement broadcasted to all users!');
-        if (res.data) {
-          setAnnouncements((prev) => [res.data, ...prev]);
-        }
       }
-      setAnnModal(null);
-      await loadAnnouncements();
-      await fetchStats();
+      fetchStats().catch(() => {});
+      loadAnnouncements().catch(() => {});
     } catch (err) {
       console.error('Failed to save announcement:', err);
       toast.error(err.response?.data?.detail || 'Failed to save announcement');
+      // Re-open modal if saving failed so user does not lose draft
+      setAnnModal(currentModalData);
     } finally {
       setSavingAnn(false);
     }
@@ -374,16 +380,19 @@ export default function AdminDashboardPage() {
 
   const handleDeleteAnnouncement = async (annId, annTitle) => {
     if (!window.confirm(`Are you sure you want to delete the announcement "${annTitle || 'this announcement'}"?`)) return;
+    
+    // Optimistically remove from list immediately
+    setAnnouncements((prev) => prev.filter((a) => a.id !== annId));
+    if (annModal && annModal.id === annId) setAnnModal(null);
+
     try {
       await adminAPI.deleteAnnouncement(annId);
       toast.success('Announcement deleted successfully!');
-      setAnnouncements((prev) => prev.filter((a) => a.id !== annId));
-      if (annModal && annModal.id === annId) setAnnModal(null);
-      await loadAnnouncements();
-      await fetchStats();
+      fetchStats();
     } catch (err) {
       console.error('Failed to delete announcement:', err);
       toast.error(err.response?.data?.detail || 'Failed to delete announcement');
+      loadAnnouncements();
     }
   };
 
@@ -879,15 +888,6 @@ export default function AdminDashboardPage() {
             <p style={{ fontSize: 13, color: '#94a3b8', margin: 0, marginTop: 2 }}>
               Full system oversight, skill analytics, content management, and user operations
             </p>
-          </div>
-
-          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-            <button className="btn btn-ghost btn-sm" onClick={fetchStats} style={{ color: '#cbd5e1', border: '1px solid #334155' }}>
-              <RefreshCw size={14} /> Refresh Stats
-            </button>
-            <button className="btn btn-primary btn-sm" onClick={() => handleExport('users', 'csv')} style={{ gap: 6 }}>
-              <Download size={14} /> Export Users CSV
-            </button>
           </div>
         </header>
 
@@ -1896,7 +1896,12 @@ export default function AdminDashboardPage() {
               </button>
             </div>
 
-            {announcements.length === 0 ? (
+            {loadingAnnouncementsState ? (
+              <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>
+                <RefreshCw size={24} className="animate-spin" style={{ margin: '0 auto 10px', display: 'block' }} />
+                <p style={{ margin: 0, fontSize: 13 }}>Loading announcements...</p>
+              </div>
+            ) : announcements.length === 0 ? (
               <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)', background: '#f8fafc', borderRadius: 8, border: '1px dashed var(--border)' }}>
                 <Bell size={24} style={{ marginBottom: 8, opacity: 0.5 }} />
                 <p style={{ margin: 0, fontWeight: 500 }}>No system announcements found</p>
@@ -1933,31 +1938,6 @@ export default function AdminDashboardPage() {
                           style={{ gap: 4 }}
                         >
                           <FileText size={14} /> Edit
-                        </button>
-                        <button
-                          className={`btn btn-sm ${ann.is_active ? 'btn-ghost' : 'btn-primary'}`}
-                          onClick={async () => {
-                            try {
-                              const res = await adminAPI.updateAnnouncement(ann.id, {
-                                title: ann.title,
-                                message: ann.message,
-                                type: ann.type,
-                                is_active: !ann.is_active,
-                              });
-                              toast.success(`Announcement ${!ann.is_active ? 'activated & live' : 'disabled'}`);
-                              if (res.data) {
-                                setAnnouncements((prev) =>
-                                  prev.map((a) => (a.id === ann.id ? res.data : a))
-                                );
-                              }
-                              await loadAnnouncements();
-                              await fetchStats();
-                            } catch (err) {
-                              toast.error(err.response?.data?.detail || 'Failed to update announcement status');
-                            }
-                          }}
-                        >
-                          {ann.is_active ? 'Disable' : 'Activate'}
                         </button>
                         <button
                           className="btn btn-ghost btn-sm"
@@ -2120,12 +2100,32 @@ export default function AdminDashboardPage() {
 
       {/* System Broadcast Announcement Modal */}
       {annModal && (
-        <div style={{
-          position: 'fixed', inset: 0, zIndex: 1000,
-          background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24,
-        }}>
-          <div className="card" style={{ maxWidth: 520, width: '100%', padding: 26, background: '#fff' }}>
+        <div
+          style={{
+            position: 'fixed', inset: 0, zIndex: 1000,
+            background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24,
+          }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !savingAnn) setAnnModal(null);
+          }}
+        >
+          <div className="card" style={{ maxWidth: 520, width: '100%', padding: 26, background: '#fff', position: 'relative' }}>
+            <button
+              type="button"
+              onClick={() => setAnnModal(null)}
+              disabled={savingAnn}
+              style={{
+                position: 'absolute', top: 16, right: 16,
+                background: 'transparent', border: 'none', cursor: 'pointer',
+                color: 'var(--text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                padding: 4, borderRadius: 6,
+              }}
+              title="Close modal"
+            >
+              <X size={18} />
+            </button>
+
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
               <div style={{ padding: 10, borderRadius: 8, background: '#fef3c7', color: '#d97706' }}>
                 <Bell size={20} />
