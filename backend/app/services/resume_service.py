@@ -253,12 +253,15 @@ def apply_resume_to_user_profile(db: Session, user_id: int, parsed_data: dict, o
             edu_items = []
             for e in parsed_data["education"]:
                 if isinstance(e, dict):
-                    deg = e.get("degree", "")
-                    inst = e.get("institution", "")
-                    yr = e.get("year", "")
-                    item = f"{deg} at {inst}".strip(" at ")
+                    deg = (e.get("degree") or "").strip()
+                    inst = (e.get("institution") or "").strip()
+                    yr = (e.get("year") or "").strip()
+                    if deg and inst:
+                        item = f"{deg} at {inst}"
+                    else:
+                        item = deg or inst
                     if yr: item += f" ({yr})"
-                    edu_items.append(item)
+                    if item: edu_items.append(item)
                 elif isinstance(e, str):
                     edu_items.append(e)
             edu = "; ".join(edu_items)
