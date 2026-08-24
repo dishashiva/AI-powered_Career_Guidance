@@ -967,8 +967,8 @@ def create_announcement(
 ):
     """Create a system broadcast banner notification."""
     ann = Announcement(
-        title=data.title,
-        message=data.message,
+        title=data.title.strip(),
+        message=data.message.strip(),
         type=data.type,
         is_active=data.is_active,
     )
@@ -992,13 +992,15 @@ def update_announcement(
     if not ann:
         raise HTTPException(status_code=404, detail="Announcement not found")
 
-    ann.title = data.title
-    ann.message = data.message
+    ann.title = data.title.strip()
+    ann.message = data.message.strip()
     ann.type = data.type
     ann.is_active = data.is_active
 
     db.commit()
     db.refresh(ann)
+    log_activity(db, action="ADMIN_ANNOUNCEMENT_UPDATE", user_id=admin.id, user_email=admin.email,
+                 details=f"Updated announcement #{ann.id}: {ann.title} (Active: {ann.is_active})")
     return ann
 
 
@@ -1012,6 +1014,9 @@ def delete_announcement(
     ann = db.query(Announcement).filter(Announcement.id == ann_id).first()
     if not ann:
         raise HTTPException(status_code=404, detail="Announcement not found")
+    ann_title = ann.title
     db.delete(ann)
     db.commit()
+    log_activity(db, action="ADMIN_ANNOUNCEMENT_DELETE", user_id=admin.id, user_email=admin.email,
+                 details=f"Deleted announcement #{ann_id}: {ann_title}")
     return {"message": "Announcement deleted successfully"}

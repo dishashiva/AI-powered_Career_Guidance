@@ -1937,9 +1937,24 @@ export default function AdminDashboardPage() {
                         <button
                           className={`btn btn-sm ${ann.is_active ? 'btn-ghost' : 'btn-primary'}`}
                           onClick={async () => {
-                            await adminAPI.updateAnnouncement(ann.id, { title: ann.title, message: ann.message, type: ann.type, is_active: !ann.is_active });
-                            toast.success(`Announcement ${!ann.is_active ? 'activated & live' : 'disabled'}`);
-                            loadAnnouncements();
+                            try {
+                              const res = await adminAPI.updateAnnouncement(ann.id, {
+                                title: ann.title,
+                                message: ann.message,
+                                type: ann.type,
+                                is_active: !ann.is_active,
+                              });
+                              toast.success(`Announcement ${!ann.is_active ? 'activated & live' : 'disabled'}`);
+                              if (res.data) {
+                                setAnnouncements((prev) =>
+                                  prev.map((a) => (a.id === ann.id ? res.data : a))
+                                );
+                              }
+                              await loadAnnouncements();
+                              await fetchStats();
+                            } catch (err) {
+                              toast.error(err.response?.data?.detail || 'Failed to update announcement status');
+                            }
                           }}
                         >
                           {ann.is_active ? 'Disable' : 'Activate'}
