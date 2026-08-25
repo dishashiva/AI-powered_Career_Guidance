@@ -47,9 +47,13 @@ FALLBACK_MODELS = [
     "openai/gpt-oss-20b",
     "qwen/qwen3.6-27b",
     "openai/gpt-oss-120b",
-    "allam-2-7b",
     "groq/compound-mini",
-    "groq/compound"
+    "groq/compound",
+    "allam-2-7b",
+    "llama-3.3-70b-versatile",
+    "llama-3.1-8b-instant",
+    "mixtral-8x7b-32768",
+    "gemma2-9b-it"
 ]
 
 
@@ -58,57 +62,63 @@ def _sync_chat_completion(url: str, headers: Dict[str, str], payload: Dict[str, 
     requested_model = payload.get("model", "openai/gpt-oss-20b")
     provider = "groq"
 
-    # Build model attempt list starting with requested model
-    models_to_try = [requested_model] + [m for m in FALLBACK_MODELS if m != requested_model]
+    # Build model attempt list starting with requested model without duplicates
+    models_to_try = [requested_model]
+    for m in FALLBACK_MODELS:
+        if m not in models_to_try:
+            models_to_try.append(m)
+
     last_exception = None
 
-    with httpx.Client(timeout=120.0, trust_env=False) as client:
+    with httpx.Client(timeout=60.0, trust_env=False) as client:
         for model_candidate in models_to_try:
             current_payload = dict(payload)
             current_payload["model"] = model_candidate
             
-            # Retry up to 3 times per model on 429 rate limit
-            for attempt in range(3):
+            # Try model candidate
+            for attempt in range(2):
                 try:
                     response = client.post(url, headers=headers, json=current_payload)
                     latency_ms = round((time.time() - start_time) * 1000, 2)
                     
                     if response.status_code == 429:
                         print(f"[DEBUG Groq Rate Limit 429 on {model_candidate} (Attempt {attempt+1})]: {response.text[:200]}", flush=True)
-                        retry_after = 2 * (attempt + 1)
-                        try:
-                            resp_json = response.json()
-                            msg = resp_json.get("error", {}).get("message", "")
-                            match = re.search(r'try again in ([\d\.]+)s', msg)
-                            if match:
-                                wait_sec = float(match.group(1))
-                                if wait_sec <= 4.0:
-                                    time.sleep(wait_sec + 0.5)
+                        last_exception = httpx.HTTPStatusError(f"429 Rate Limit on {model_candidate}", request=response.request, response=response)
+                        if attempt == 0:
+                            try:
+                                resp_json = response.json()
+                                msg = resp_json.get("error", {}).get("message", "")
+                                match = re.search(r'try again in ([\d\.]+)s', msg)
+                                if match and float(match.group(1)) <= 2.0:
+                                    time.sleep(float(match.group(1)) + 0.3)
                                     continue
-                        except Exception:
-                            pass
-                        
-                        time.sleep(retry_after)
-                        if attempt == 2:
-                            break
-                        continue
-
-                    # If model not found or forbidden, immediately try next model
-                    if response.status_code in (404, 400):
-                        print(f"[DEBUG Groq Status {response.status_code} on {model_candidate}]: {response.text[:200]} - trying next fallback model...", flush=True)
+                            except Exception:
+                                pass
+                        # Switch immediately to next candidate model
                         break
 
                     if response.status_code != 200:
-                        print(f"[DEBUG Groq Error {response.status_code} on {model_candidate}]: {response.text}", flush=True)
-                        logging.error(f"[DEBUG Groq Error {response.status_code}]: {response.text}")
-                        response.raise_for_status()
+                        print(f"[DEBUG Groq Status {response.status_code} on {model_candidate}]: {response.text[:200]} - trying next fallback model...", flush=True)
+                        last_exception = httpx.HTTPStatusError(f"HTTP {response.status_code} on {model_candidate}: {response.text[:200]}", request=response.request, response=response)
+                        break
 
                     data = response.json()
+                    choices = data.get("choices", [])
+                    if not choices:
+                        print(f"[DEBUG Groq Empty Choices on {model_candidate}] - trying next fallback model...", flush=True)
+                        last_exception = ValueError(f"Empty choices from {model_candidate}")
+                        break
+
+                    content = choices[0].get("message", {}).get("content", "")
+                    if not content or not str(content).strip():
+                        print(f"[DEBUG Groq Empty Content on {model_candidate}] - trying next fallback model...", flush=True)
+                        last_exception = ValueError(f"Empty message content from {model_candidate}")
+                        break
+
                     usage = data.get("usage", {})
                     p_tokens = usage.get("prompt_tokens", 0)
                     c_tokens = usage.get("completion_tokens", 0)
                     t_tokens = usage.get("total_tokens", p_tokens + c_tokens)
-                    content = data["choices"][0]["message"]["content"]
 
                     if t_tokens == 0:
                         msg_str = str(current_payload.get("messages", ""))
@@ -129,14 +139,17 @@ def _sync_chat_completion(url: str, headers: Dict[str, str], payload: Dict[str, 
                     )
                     return content
 
+                except (httpx.ConnectError, httpx.TimeoutException, httpx.NetworkError) as e:
+                    print(f"[DEBUG Groq Connection Error on {model_candidate}]: {e} - trying next fallback model...", flush=True)
+                    last_exception = e
+                    break
                 except httpx.HTTPStatusError as e:
                     last_exception = e
-                    if e.response.status_code in (404, 429, 400):
-                        break # Switch to next candidate model
-                    raise
+                    break
                 except Exception as e:
+                    print(f"[DEBUG Groq Unexpected Exception on {model_candidate}]: {e} - trying next fallback model...", flush=True)
                     last_exception = e
-                    time.sleep(1)
+                    break
 
     latency_ms = round((time.time() - start_time) * 1000, 2)
     _log_usage_to_db(

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { coursesAPI, resumesAPI } from '../api/client';
 import CourseCard from '../components/CourseCard';
 import { getActiveResumeId, setActiveResumeId } from '../utils/activeResume';
+import { getCache, setCache, removeCache } from '../utils/browserCache';
 import { BookOpen, RefreshCw, Search, GraduationCap, Map, CheckCircle2, ChevronRight, FileText } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -28,11 +29,28 @@ export default function CoursesPage() {
       .catch(() => {});
   }, []);
 
-  const loadCourses = useCallback(async () => {
+  const loadCourses = useCallback(async (forceRefresh = false) => {
+    const cacheKey = `courses_rec_${selectedResumeId || 'default'}`;
+
+    if (!forceRefresh) {
+      const cached = getCache(cacheKey);
+      if (cached && Array.isArray(cached) && cached.length > 0) {
+        setCourses(cached);
+        setLoading(false);
+        return;
+      }
+    } else {
+      removeCache(cacheKey);
+    }
+
     setLoading(true);
     try {
       const res = await coursesAPI.getRecommendations(selectedResumeId || null);
-      setCourses(res.data.courses || []);
+      const coursesList = res.data.courses || [];
+      setCourses(coursesList);
+      if (coursesList.length > 0) {
+        setCache(cacheKey, coursesList);
+      }
     } catch {
       toast.error('Could not load course recommendations');
     } finally {
@@ -40,11 +58,28 @@ export default function CoursesPage() {
     }
   }, [selectedResumeId]);
 
-  const loadLearningPath = useCallback(async () => {
+  const loadLearningPath = useCallback(async (forceRefresh = false) => {
+    const cacheKey = `learning_path_${selectedResumeId || 'default'}`;
+
+    if (!forceRefresh) {
+      const cached = getCache(cacheKey);
+      if (cached && cached.phases && cached.phases.length > 0) {
+        setLearningPath(cached);
+        setLoadingPath(false);
+        return;
+      }
+    } else {
+      removeCache(cacheKey);
+    }
+
     setLoadingPath(true);
     try {
       const res = await coursesAPI.getLearningPath(selectedResumeId || null);
-      setLearningPath(res.data);
+      const pathData = res.data;
+      setLearningPath(pathData);
+      if (pathData && pathData.phases) {
+        setCache(cacheKey, pathData);
+      }
     } catch {
       toast.error('Could not load learning path');
     } finally {
@@ -53,8 +88,8 @@ export default function CoursesPage() {
   }, [selectedResumeId]);
 
   useEffect(() => {
-    loadCourses();
-    loadLearningPath();
+    loadCourses(false);
+    loadLearningPath(false);
   }, [loadCourses, loadLearningPath]);
 
   const filtered = courses.filter((c) => {
@@ -102,8 +137,16 @@ export default function CoursesPage() {
                 </select>
               </div>
             )}
-            <button onClick={() => { loadCourses(); loadLearningPath(); }} className="btn btn-secondary btn-sm" disabled={loading}>
-              <RefreshCw size={14} className={loading ? 'spinner' : ''} />
+            <button
+              onClick={() => {
+                loadCourses(true);
+                loadLearningPath(true);
+                toast.success('Course recommendations refreshed');
+              }}
+              className="btn btn-secondary btn-sm"
+              disabled={loading || loadingPath}
+            >
+              <RefreshCw size={14} className={loading || loadingPath ? 'spinner' : ''} />
               Refresh Recommendations
             </button>
           </div>

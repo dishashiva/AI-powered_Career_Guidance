@@ -331,20 +331,23 @@ async def _ai_pipeline_async(resume_id: int, text: str, db: Session) -> None:
 
         logger.info(f"[Resume {resume_id}] Parse done — {len(skills)} skills")
 
-        # Steps 2-4 — run concurrently
+        # Steps 2-5 — run concurrently
         job_title        = parsed.get("current_title") or (roles[0] if roles else "General Professional")
         experience_years = parsed.get("experience_years") or max(len(experience) * 2, 1)
+        target_role      = parsed.get("target_title") or job_title
 
         results = await asyncio.gather(
             ai_service.analyze_ats_and_gaps(text, skills),
             ai_service.predict_career_paths(skills, roles, summary),
             ai_service.predict_salary(job_title, skills, experience_years),
+            ai_service.generate_resume_improvements(text, target_role=target_role),
             return_exceptions=True,
         )
 
-        ats_data    = results[0] if not isinstance(results[0], Exception) else {"ats_score": 0, "skill_gaps": []}
-        career_data = results[1] if not isinstance(results[1], Exception) else {"career_paths": []}
-        salary_data = results[2] if not isinstance(results[2], Exception) else {}
+        ats_data          = results[0] if not isinstance(results[0], Exception) else {"ats_score": 0, "skill_gaps": []}
+        career_data       = results[1] if not isinstance(results[1], Exception) else {"career_paths": []}
+        salary_data       = results[2] if not isinstance(results[2], Exception) else {}
+        improvements_data = results[3] if not isinstance(results[3], Exception) else {}
 
         if isinstance(results[0], Exception):
             logger.error(f"[Resume {resume_id}] ATS analysis failed: {results[0]}")
@@ -352,6 +355,10 @@ async def _ai_pipeline_async(resume_id: int, text: str, db: Session) -> None:
             logger.error(f"[Resume {resume_id}] Career paths failed: {results[1]}")
         if isinstance(results[2], Exception):
             logger.error(f"[Resume {resume_id}] Salary prediction failed: {results[2]}")
+        if isinstance(results[3], Exception):
+            logger.error(f"[Resume {resume_id}] Improvements generation failed: {results[3]}")
+        elif isinstance(improvements_data, dict):
+            parsed["improvements"] = improvements_data
 
         logger.info(f"[Resume {resume_id}] Gather done — ATS: {ats_data.get('ats_score')}")
 
@@ -365,7 +372,7 @@ async def _ai_pipeline_async(resume_id: int, text: str, db: Session) -> None:
         resume.parsed_skills         = json.dumps(skills)
         resume.parsed_roles          = json.dumps(roles)
         resume.parsed_experience     = json.dumps(experience)
-        resume.parsed_certifications   = json.dumps(certifications)
+        resume.parsed_certifications = json.dumps(certifications)
         resume.parsed_courses        = json.dumps(courses)
         resume.ats_score             = float(ats_data.get("ats_score", 0))
         resume.skill_gaps_json       = json.dumps(ats_data.get("skill_gaps", []))

@@ -4,6 +4,7 @@ import { resumesAPI } from '../api/client';
 import ResumeBuilder from '../components/ResumeBuilder';
 import AIInterviewPrep from '../components/AIInterviewPrep';
 import { getActiveResumeId, setActiveResumeId } from '../utils/activeResume';
+import { getCache, setCache, removeCache, clearCacheByPrefix } from '../utils/browserCache';
 import {
   RadialBarChart, RadialBar, ResponsiveContainer,
 } from 'recharts';
@@ -11,7 +12,7 @@ import {
   Target, TrendingUp, AlertTriangle, CheckCircle, Brain, DollarSign,
   Download, Trash2, FileText, Clock, ChevronRight, Eye,
   ChevronDown, Sparkles, Copy, Check, Briefcase, BookOpen, Layers,
-  Zap, FileCheck, Award, HelpCircle
+  Zap, FileCheck, Award, HelpCircle, RefreshCw
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -396,17 +397,47 @@ function JdMatcherSection({ resumeId, resumeName }) {
 /* ─── Module 6: Resume Improvement Suggestions Component ─────────── */
 function ResumeImprovementSection({ resumeId, resumeName }) {
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [data, setData] = useState(null);
   const [copiedIdx, setCopiedIdx] = useState(null);
 
-  useEffect(() => {
+  const loadImprovements = useCallback(async (forceRefresh = false) => {
     if (!resumeId) return;
+    const cacheKey = `resume_improvements_${resumeId}`;
+
+    if (!forceRefresh) {
+      const cached = getCache(cacheKey);
+      if (cached && (cached.improved_summaries || cached.missing_keywords)) {
+        setData(cached);
+        setLoading(false);
+        return;
+      }
+    } else {
+      removeCache(cacheKey);
+      setRefreshing(true);
+    }
+
     setLoading(true);
-    resumesAPI.getImprovements(resumeId)
-      .then((res) => setData(res.data))
-      .catch(() => toast.error('Could not fetch resume improvement suggestions'))
-      .finally(() => setLoading(false));
+    try {
+      const res = await resumesAPI.getImprovements(resumeId, forceRefresh);
+      setData(res.data);
+      if (res.data) {
+        setCache(cacheKey, res.data);
+      }
+      if (forceRefresh) {
+        toast.success('Resume improvements refreshed');
+      }
+    } catch {
+      toast.error('Could not fetch resume improvement suggestions');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
   }, [resumeId]);
+
+  useEffect(() => {
+    loadImprovements(false);
+  }, [loadImprovements]);
 
   const copyText = (text, idx) => {
     navigator.clipboard.writeText(text);
@@ -415,7 +446,7 @@ function ResumeImprovementSection({ resumeId, resumeName }) {
     setTimeout(() => setCopiedIdx(null), 2000);
   };
 
-  if (loading) {
+  if (loading && !data) {
     return (
       <div className="card" style={{ padding: 32, textAlign: 'center' }}>
         <div className="spinner" style={{ margin: '0 auto 16px', width: 28, height: 28 }} />
@@ -430,13 +461,26 @@ function ResumeImprovementSection({ resumeId, resumeName }) {
     <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       {/* Header card */}
       <div className="card">
-        <div className="flex items-center gap-2" style={{ marginBottom: 4 }}>
-          <Sparkles size={18} color="var(--accent)" />
-          <h2 style={{ fontSize: 16, fontWeight: 600, margin: 0 }}>AI Resume Improvement Suggestions</h2>
+        <div className="flex items-center justify-between" style={{ flexWrap: 'wrap', gap: 12 }}>
+          <div>
+            <div className="flex items-center gap-2" style={{ marginBottom: 4 }}>
+              <Sparkles size={18} color="var(--accent)" />
+              <h2 style={{ fontSize: 16, fontWeight: 600, margin: 0 }}>AI Resume Improvement Suggestions</h2>
+            </div>
+            <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: 0 }}>
+              Optimized enhancements based on <strong>{resumeName}</strong> to boost your ATS pass rate and impress recruiters.
+            </p>
+          </div>
+          <button
+            onClick={() => loadImprovements(true)}
+            className="btn btn-secondary btn-sm"
+            disabled={loading || refreshing}
+            style={{ fontSize: 12, gap: 6 }}
+          >
+            <RefreshCw size={13} className={refreshing ? 'spinner' : ''} />
+            Regenerate Suggestions
+          </button>
         </div>
-        <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: 0 }}>
-          Optimized enhancements based on <strong>{resumeName}</strong> to boost your ATS pass rate and impress recruiters.
-        </p>
       </div>
 
       {/* Upgraded Summaries */}
@@ -641,6 +685,9 @@ export default function CareerDashboardPage() {
     setDeleting(true);
     try {
       await resumesAPI.delete(deleteTarget.id);
+      clearCacheByPrefix('jobs_rec_');
+      clearCacheByPrefix('courses_rec_');
+      clearCacheByPrefix('learning_path_');
       toast.success('Resume deleted');
       setDeleteTarget(null);
 

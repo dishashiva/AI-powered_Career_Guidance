@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, BackgroundTasks, Query
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from ..database import get_db
@@ -312,10 +312,11 @@ async def compare_resume_with_jd(
 @router.get("/{resume_id}/improvements")
 async def get_resume_improvements(
     resume_id: int,
+    force: bool = Query(False, description="Force re-generation of improvements"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Module 6: Resume Improvement Suggestions AI."""
+    """Module 6: Resume Improvement Suggestions AI. Generated once per resume and cached."""
     resume = db.query(Resume).filter(
         Resume.id == resume_id, Resume.user_id == current_user.id
     ).first()
@@ -323,6 +324,11 @@ async def get_resume_improvements(
         raise HTTPException(status_code=404, detail="Resume not found")
 
     raw = json.loads(resume.parsed_raw_json or "{}")
+
+    # Return cached improvements if already generated for this resume
+    if not force and "improvements" in raw and isinstance(raw["improvements"], dict) and raw["improvements"].get("improved_summaries"):
+        return raw["improvements"]
+
     target_role = raw.get("target_title") or raw.get("current_title") or ""
 
     try:
@@ -330,6 +336,12 @@ async def get_resume_improvements(
             resume_text=resume.text_extract or "",
             target_role=target_role,
         )
+
+        # Store in cache on resume record so it is only generated once per resume
+        raw["improvements"] = improvements
+        resume.parsed_raw_json = json.dumps(raw)
+        db.commit()
+
         return improvements
     except Exception as e:
         raise HTTPException(status_code=503, detail=str(e))

@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import ResumeUpload from '../components/ResumeUpload';
 import { resumesAPI } from '../api/client';
 import { setActiveResumeId } from '../utils/activeResume';
+import { clearCacheByPrefix } from '../utils/browserCache';
 import {
   FileText, Clock, Upload, ChevronRight, Download, Trash2, Eye, X, Loader2, ExternalLink,
 } from 'lucide-react';
@@ -316,6 +317,9 @@ export default function DashboardPage() {
   }, []);
 
   const handleUploadSuccess = (data) => {
+    clearCacheByPrefix('jobs_rec_');
+    clearCacheByPrefix('courses_rec_');
+    clearCacheByPrefix('learning_path_');
     setResumes((prev) => [{
       id: data.id,
       filename: data.filename,
@@ -346,6 +350,9 @@ export default function DashboardPage() {
     setDeleting(true);
     try {
       await resumesAPI.delete(deleteTarget.id);
+      clearCacheByPrefix('jobs_rec_');
+      clearCacheByPrefix('courses_rec_');
+      clearCacheByPrefix('learning_path_');
       setResumes((prev) => prev.filter((r) => r.id !== deleteTarget.id));
       toast.success('Resume deleted');
       setDeleteTarget(null);

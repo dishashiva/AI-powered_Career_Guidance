@@ -71,7 +71,7 @@ export const resumesAPI = {
   view: (id) => client.get(`/resumes/${id}/view`, { responseType: 'blob' }),
   autofillProfile: (id, overwrite = true) => client.post(`/resumes/${id}/autofill-profile?overwrite=${overwrite}`),
   compareJd: (data) => client.post('/resumes/compare-jd', data),
-  getImprovements: (id) => client.get(`/resumes/${id}/improvements`),
+  getImprovements: (id, force = false) => client.get(`/resumes/${id}/improvements${force ? '?force=true' : ''}`),
 };
 
 // ─── Jobs ────────────────────────────────────────────────────────

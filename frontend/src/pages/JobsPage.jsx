@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { jobsAPI, resumesAPI } from '../api/client';
 import JobCard from '../components/JobCard';
 import { getActiveResumeId, setActiveResumeId } from '../utils/activeResume';
+import { getCache, setCache, removeCache } from '../utils/browserCache';
 import { Briefcase, RefreshCw, Search, MapPin, Filter, FileText } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -26,11 +27,31 @@ export default function JobsPage() {
       .catch(() => {});
   }, []);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (forceRefresh = false) => {
+    const cacheKey = `jobs_rec_${selectedResumeId || 'default'}`;
+
+    if (!forceRefresh) {
+      const cached = getCache(cacheKey);
+      if (cached && Array.isArray(cached) && cached.length > 0) {
+        setJobs(cached);
+        setLoading(false);
+        return;
+      }
+    } else {
+      removeCache(cacheKey);
+    }
+
     setLoading(true);
     try {
       const res = await jobsAPI.getRecommendations(selectedResumeId || null);
-      setJobs(res.data.jobs || []);
+      const jobsList = res.data.jobs || [];
+      setJobs(jobsList);
+      if (jobsList.length > 0) {
+        setCache(cacheKey, jobsList);
+      }
+      if (forceRefresh) {
+        toast.success('Job matches refreshed');
+      }
     } catch {
       toast.error('Could not load job recommendations');
     } finally {
@@ -38,7 +59,7 @@ export default function JobsPage() {
     }
   }, [selectedResumeId]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(false); }, [load]);
 
   const filtered = jobs.filter((j) => {
     const matchesText = !filter ||
@@ -92,7 +113,7 @@ export default function JobsPage() {
                 </select>
               </div>
             )}
-            <button onClick={load} className="btn btn-secondary btn-sm" disabled={loading}>
+            <button onClick={() => load(true)} className="btn btn-secondary btn-sm" disabled={loading}>
               <RefreshCw size={14} className={loading ? 'spinner' : ''} />
               Refresh Matches
             </button>
