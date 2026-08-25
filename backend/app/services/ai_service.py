@@ -47,24 +47,65 @@ FALLBACK_MODELS = [
     "openai/gpt-oss-20b",
     "qwen/qwen3.6-27b",
     "openai/gpt-oss-120b",
-    "groq/compound-mini",
-    "groq/compound",
     "allam-2-7b",
     "llama-3.3-70b-versatile",
-    "llama-3.1-8b-instant",
-    "mixtral-8x7b-32768",
-    "gemma2-9b-it"
+    "llama-3.1-8b-instant"
 ]
+
+_LIVE_MODELS_CACHE = {"models": [], "expires_at": 0}
+
+
+def _get_live_models(headers: Dict[str, str], base_url: str) -> list:
+    """Dynamically fetch currently active, in-use Groq text models from API and exclude decommissioned ones."""
+    now = time.time()
+    if _LIVE_MODELS_CACHE["models"] and now < _LIVE_MODELS_CACHE["expires_at"]:
+        return _LIVE_MODELS_CACHE["models"]
+
+    discovered = []
+    try:
+        models_url = f"{base_url}/models"
+        with httpx.Client(timeout=8.0, trust_env=False) as client:
+            resp = client.get(models_url, headers=headers)
+            if resp.status_code == 200:
+                data = resp.json().get("data", [])
+                skip_keywords = ["guard", "whisper", "orpheus", "compound"]
+                
+                for item in data:
+                    m_id = item.get("id", "")
+                    modalities = item.get("output_modalities", [])
+                    is_active = item.get("active", True)
+                    
+                    if not is_active:
+                        continue
+                    if any(sk in m_id.lower() for sk in skip_keywords):
+                        continue
+                    if "text" in modalities:
+                        discovered.append(m_id)
+    except Exception as ex:
+        logging.warning(f"Notice: dynamically querying Groq live models ({ex}), using static priority list.")
+
+    combined = []
+    for m in discovered + FALLBACK_MODELS:
+        if m and m not in combined:
+            combined.append(m)
+
+    _LIVE_MODELS_CACHE["models"] = combined
+    _LIVE_MODELS_CACHE["expires_at"] = now + 1800  # 30-minute cache
+    return combined
 
 
 def _sync_chat_completion(url: str, headers: Dict[str, str], payload: Dict[str, Any], feature: str = "General AI") -> str:
     start_time = time.time()
+    base_url = (settings.GROQ_BASE_URL or "https://api.groq.com/openai/v1").strip().rstrip("/")
     requested_model = payload.get("model", "openai/gpt-oss-20b")
     provider = "groq"
 
+    # Get live in-use models dynamically from Groq
+    live_models = _get_live_models(headers, base_url)
+
     # Build model attempt list starting with requested model without duplicates
     models_to_try = [requested_model]
-    for m in FALLBACK_MODELS:
+    for m in live_models:
         if m not in models_to_try:
             models_to_try.append(m)
 

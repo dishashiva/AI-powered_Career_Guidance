@@ -17,7 +17,7 @@ class Settings(BaseSettings):
 
     # Groq API
     GROQ_API_KEY: str = ""
-    GROQ_MODEL: str = "groq/compound-mini"
+    GROQ_MODEL: str = "openai/gpt-oss-20b"
     GROQ_BASE_URL: str = "https://api.groq.com/openai/v1"
 
     # App
